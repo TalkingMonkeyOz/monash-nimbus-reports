@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Paper, Typography, Alert, Chip, Box, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent } from "@mui/material";
+import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent } from "@mui/material";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
@@ -239,48 +239,24 @@ export default function ActivitiesReport() {
         </Alert>
       )}
 
-      <Box
+      <DataGrid
+        rows={data}
+        columns={columns}
+        loading={loading}
+        pageSizeOptions={[25, 50, 100]}
+        initialState={{
+          pagination: { paginationModel: { pageSize: 25 } },
+        }}
+        disableRowSelectionOnClick
+        getRowClassName={(params) => (params.row.flagged ? "flagged-row" : "")}
         sx={{
-          width: "100%",
-          overflowX: "auto",
-          position: "relative",
-          "& ::-webkit-scrollbar": {
-            height: 12,
-          },
-          "& ::-webkit-scrollbar-track": {
-            backgroundColor: "#f1f1f1",
-          },
-          "& ::-webkit-scrollbar-thumb": {
-            backgroundColor: "#888",
-            borderRadius: 6,
-            "&:hover": {
-              backgroundColor: "#555",
-            },
+          height: "calc(100vh - 340px)",
+          minHeight: 400,
+          "& .flagged-row": {
+            backgroundColor: "rgba(211, 47, 47, 0.1)",
           },
         }}
-      >
-        <DataGrid
-          rows={data}
-          columns={columns}
-          loading={loading}
-          autoHeight
-          pageSizeOptions={[25, 50, 100]}
-          initialState={{
-            pagination: { paginationModel: { pageSize: 25 } },
-          }}
-          disableRowSelectionOnClick
-          getRowClassName={(params) => (params.row.flagged ? "flagged-row" : "")}
-          sx={{
-            minWidth: 1800,
-            "& .flagged-row": {
-              backgroundColor: "rgba(211, 47, 47, 0.1)",
-            },
-            "& .MuiDataGrid-virtualScroller": {
-              overflowX: "visible",
-            },
-          }}
-        />
-      </Box>
+      />
     </Paper>
   );
 }
