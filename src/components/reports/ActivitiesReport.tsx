@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Paper, Typography, Alert, Chip, Box } from "@mui/material";
+import { useState, useCallback, useEffect } from "react";
+import { Paper, Typography, Alert, Chip, Box, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent } from "@mui/material";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
@@ -8,10 +8,13 @@ import { exportToExcel } from "../../core/export";
 import { fetchActiveShiftsWithActivities } from "../../hooks/useScheduleShifts";
 import {
   loadAllLookups,
+  loadLocations,
   getUsername,
   getDepartment,
   getScheduleDateRange,
   getLocationViaSchedule,
+  getAllLocations,
+  LocationInfo,
 } from "../../core/lookupService";
 
 interface ActivityChange {
@@ -76,8 +79,27 @@ export default function ActivitiesReport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [locations, setLocations] = useState<LocationInfo[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
 
   const { session } = useConnectionStore();
+
+  // Load locations for filter dropdown
+  useEffect(() => {
+    if (session) {
+      loadLocations({
+        base_url: session.base_url,
+        user_id: session.user_id,
+        auth_token: session.auth_token,
+      }).then(() => {
+        setLocations(getAllLocations());
+      });
+    }
+  }, [session]);
+
+  const handleLocationChange = (event: SelectChangeEvent<number | "">) => {
+    setSelectedLocationId(event.target.value as number | "");
+  };
 
   const handleSearch = useCallback(async () => {
     if (!session) {
@@ -141,8 +163,16 @@ export default function ActivitiesReport() {
       // Sort flagged items first
       transformed.sort((a, b) => (b.flagged ? 1 : 0) - (a.flagged ? 1 : 0));
 
-      setData(transformed);
-      setStatus(`Found ${transformed.length} shifts (${transformed.filter(t => t.flagged).length} flagged)`);
+      // Filter by location if selected
+      const selectedLocationName = selectedLocationId
+        ? locations.find(l => l.id === selectedLocationId)?.description
+        : null;
+      const filtered = selectedLocationName
+        ? transformed.filter(item => item.location === selectedLocationName)
+        : transformed;
+
+      setData(filtered);
+      setStatus(`Found ${filtered.length} shifts (${filtered.filter(t => t.flagged).length} flagged)${selectedLocationName ? ` at ${selectedLocationName}` : ""}`);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -150,7 +180,7 @@ export default function ActivitiesReport() {
     } finally {
       setLoading(false);
     }
-  }, [session, fromDate, toDate]);
+  }, [session, fromDate, toDate, selectedLocationId, locations]);
 
   const handleExport = useCallback(() => {
     if (data.length === 0) return;
@@ -185,7 +215,23 @@ export default function ActivitiesReport() {
         onSearch={handleSearch}
         onExport={handleExport}
         loading={loading}
-      />
+      >
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Location</InputLabel>
+          <Select
+            value={selectedLocationId}
+            onChange={handleLocationChange}
+            label="Location"
+          >
+            <MenuItem value="">All Locations</MenuItem>
+            {locations.map((loc) => (
+              <MenuItem key={loc.id} value={loc.id}>
+                {loc.description}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </ReportFilters>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

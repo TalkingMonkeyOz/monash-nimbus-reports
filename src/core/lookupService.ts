@@ -257,6 +257,24 @@ export function clearCaches(): void {
 }
 
 /**
+ * Get all locations as array for dropdown
+ */
+export function getAllLocations(): LocationInfo[] {
+  return Array.from(locationCache.values()).sort((a, b) =>
+    a.description.localeCompare(b.description)
+  );
+}
+
+/**
+ * Get all departments as array for dropdown
+ */
+export function getAllDepartments(): DepartmentInfo[] {
+  return Array.from(departmentCache.values()).sort((a, b) =>
+    a.description.localeCompare(b.description)
+  );
+}
+
+/**
  * Load all lookups needed for reports
  */
 export async function loadAllLookups(

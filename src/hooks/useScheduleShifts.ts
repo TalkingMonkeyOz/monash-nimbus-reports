@@ -217,3 +217,17 @@ export async function fetchShiftsMissingJobRole(
     additionalFilter: "Deleted eq false and JobRoleID eq null",
   });
 }
+
+/**
+ * Fetch empty/unallocated shifts - for Deleted Agreements Report
+ * Server-side filter: Deleted eq false and UserID eq null
+ * These are shifts that exist but have no person assigned
+ */
+export async function fetchEmptyShifts(
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
+): Promise<ScheduleShiftData[]> {
+  return fetchShiftsInDateRange({
+    ...options,
+    additionalFilter: "Deleted eq false and UserID eq null",
+  });
+}
