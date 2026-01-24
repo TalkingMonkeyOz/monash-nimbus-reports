@@ -1,10 +1,13 @@
-import { useState, useCallback, useEffect } from "react";
-import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent } from "@mui/material";
-import { DataGrid, GridColDef } from "@mui/x-data-grid";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, IconButton, Tooltip, Box } from "@mui/material";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
+import { openNimbusSchedule } from "../../core/nimbusLinks";
 import { fetchShiftsMissingJobRole } from "../../hooks/useScheduleShifts";
 import {
   loadAllLookups,
@@ -33,7 +36,8 @@ interface ShiftMissingJobRole {
   activityType: string;
 }
 
-const columns: GridColDef<ShiftMissingJobRole>[] = [
+// Base columns for export
+const baseColumns: GridColDef<ShiftMissingJobRole>[] = [
   { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
   { field: "shiftDate", headerName: "Date", width: 110 },
   { field: "shiftFrom", headerName: "From", width: 80 },
@@ -49,9 +53,9 @@ const columns: GridColDef<ShiftMissingJobRole>[] = [
 ];
 
 export default function MissingJobRolesReport() {
-  // Default to first week of March 2026 (where test data exists)
-  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs("2026-03-01"));
-  const [toDate, setToDate] = useState<Dayjs | null>(dayjs("2026-03-07"));
+  // Default to last 30 days
+  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(30, "day"));
+  const [toDate, setToDate] = useState<Dayjs | null>(dayjs());
   const [data, setData] = useState<ShiftMissingJobRole[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +64,31 @@ export default function MissingJobRolesReport() {
   const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
 
   const { session } = useConnectionStore();
+
+  // Build columns with action column
+  const columns: GridColDef<ShiftMissingJobRole>[] = useMemo(() => [
+    {
+      field: "actions",
+      headerName: "",
+      width: 50,
+      sortable: false,
+      filterable: false,
+      disableColumnMenu: true,
+      renderCell: (params: GridRenderCellParams<ShiftMissingJobRole>) => (
+        params.row.scheduleId ? (
+          <Tooltip title="Open in Nimbus">
+            <IconButton
+              size="small"
+              onClick={() => session && openNimbusSchedule(session.base_url, params.row.scheduleId)}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null
+      ),
+    },
+    ...baseColumns,
+  ], [session]);
 
   // Load locations for filter dropdown
   useEffect(() => {
@@ -147,27 +176,43 @@ export default function MissingJobRolesReport() {
     }
   }, [session, fromDate, toDate, selectedLocationId, locations]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (data.length === 0) return;
-    exportToExcel(data, "Missing_Job_Roles_Report", columns);
+    setStatus("Exporting to Excel...");
+    const result = await exportToExcel(data, "Missing_Job_Roles_Report", baseColumns);
+    if (result.success) {
+      setStatus(result.message);
+    } else {
+      setError(result.message);
+    }
   }, [data]);
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6" gutterBottom>
-        Missing Job Roles Report
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Identify shifts that don't have a job role assigned.
+    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+        <Typography variant="h6">
+          Missing Job Roles Report
+        </Typography>
+        <Tooltip
+          title={
+            <>
+              <strong>Problem it solves:</strong> "This shift doesn't have a job role - it may not cost correctly."
+              <br /><br />
+              Finds configuration gaps where shifts are missing job roles, which could affect payroll processing.
+              <br /><br />
+              <strong>Tip:</strong> Click the arrow icon on any row to open that schedule in Nimbus.
+            </>
+          }
+          arrow
+        >
+          <HelpOutlineIcon fontSize="small" color="action" sx={{ cursor: "help" }} />
+        </Tooltip>
         {data.length > 0 && (
-          <Chip
-            label={`${data.length} shifts with missing job roles`}
-            color="warning"
-            size="small"
-            sx={{ ml: 1 }}
-          />
+          <Chip label={`${data.length} missing`} color="warning" size="small" />
         )}
-        {status && <span style={{ marginLeft: 8, fontStyle: "italic" }}>{status}</span>}
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {status || "Identify shifts that don't have a job role assigned."}
       </Typography>
 
       <ReportFilters
@@ -212,7 +257,7 @@ export default function MissingJobRolesReport() {
         }}
         disableRowSelectionOnClick
         sx={{
-          height: "calc(100vh - 340px)",
+          flex: 1,
           minHeight: 400,
         }}
       />

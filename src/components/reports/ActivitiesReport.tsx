@@ -1,10 +1,13 @@
-import { useState, useCallback, useEffect } from "react";
-import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent } from "@mui/material";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, IconButton, Tooltip, Box } from "@mui/material";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
+import { openNimbusSchedule } from "../../core/nimbusLinks";
 import { fetchActiveShiftsWithActivities } from "../../hooks/useScheduleShifts";
 import {
   loadAllLookups,
@@ -14,6 +17,8 @@ import {
   getScheduleDateRange,
   getLocationViaSchedule,
   getAllLocations,
+  getActivityTypeDescription,
+  isActivityTypeTT,
   LocationInfo,
 } from "../../core/lookupService";
 
@@ -35,46 +40,28 @@ interface ActivityChange {
   flagged: boolean;
 }
 
-const columns: GridColDef<ActivityChange>[] = [
-  { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
+// Base columns for export (no action buttons or renderCell) - date first for easier scanning
+const baseColumns: GridColDef<ActivityChange>[] = [
   { field: "shiftDate", headerName: "Date", width: 110 },
   { field: "shiftFrom", headerName: "From", width: 80 },
   { field: "shiftTo", headerName: "To", width: 80 },
-  { field: "location", headerName: "Location", width: 140 },
-  { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
-  { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
+  { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
   { field: "assignedUser", headerName: "Assigned To", width: 180 },
   { field: "activityDescription", headerName: "Activity", flex: 1, minWidth: 120 },
   { field: "syllabusPlus", headerName: "Syllabus Plus", width: 150 },
   { field: "unitCode", headerName: "Unit Code", width: 100 },
-  {
-    field: "isTTActivity",
-    headerName: "TT Activity",
-    width: 100,
-    renderCell: (params: GridRenderCellParams<ActivityChange>) => (
-      <Chip
-        label={params.value ? "Yes" : "No"}
-        color={params.value ? "success" : "warning"}
-        size="small"
-      />
-    ),
-  },
-  {
-    field: "flagged",
-    headerName: "Flagged",
-    width: 100,
-    renderCell: (params: GridRenderCellParams<ActivityChange>) =>
-      params.value ? (
-        <Chip label="FLAG" color="error" size="small" />
-      ) : null,
-  },
+  { field: "location", headerName: "Location", width: 140 },
+  { field: "department", headerName: "Department", width: 140 },
+  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
+  { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
+  { field: "isTTActivity", headerName: "TT Activity", width: 100 },
+  { field: "flagged", headerName: "Flagged", width: 100 },
 ];
 
 export default function ActivitiesReport() {
-  // Default to first week of March 2026 (where test data exists)
-  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs("2026-03-01"));
-  const [toDate, setToDate] = useState<Dayjs | null>(dayjs("2026-03-07"));
+  // Default to last 30 days
+  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(30, "day"));
+  const [toDate, setToDate] = useState<Dayjs | null>(dayjs());
   const [data, setData] = useState<ActivityChange[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +70,52 @@ export default function ActivitiesReport() {
   const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
 
   const { session } = useConnectionStore();
+
+  // Build columns with action column
+  const columns: GridColDef<ActivityChange>[] = useMemo(() => [
+    {
+      field: "actions",
+      headerName: "",
+      width: 50,
+      sortable: false,
+      filterable: false,
+      disableColumnMenu: true,
+      renderCell: (params: GridRenderCellParams<ActivityChange>) => (
+        params.row.scheduleId ? (
+          <Tooltip title="Open in Nimbus">
+            <IconButton
+              size="small"
+              onClick={() => session && openNimbusSchedule(session.base_url, params.row.scheduleId)}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null
+      ),
+    },
+    ...baseColumns.slice(0, 12), // All columns before isTTActivity
+    {
+      field: "isTTActivity",
+      headerName: "TT Activity",
+      width: 100,
+      renderCell: (params: GridRenderCellParams<ActivityChange>) => (
+        <Chip
+          label={params.value ? "Yes" : "No"}
+          color={params.value ? "success" : "warning"}
+          size="small"
+        />
+      ),
+    },
+    {
+      field: "flagged",
+      headerName: "Flagged",
+      width: 100,
+      renderCell: (params: GridRenderCellParams<ActivityChange>) =>
+        params.value ? (
+          <Chip label="FLAG" color="error" size="small" />
+        ) : null,
+    },
+  ], [session]);
 
   // Load locations for filter dropdown
   useEffect(() => {
@@ -135,11 +168,15 @@ export default function ActivitiesReport() {
       await loadAllLookups(sessionData, scheduleIds, setStatus);
 
       // Transform and flag non-TT activities
+      // Business rule: Flag shifts that have SyllabusPlus (from timetable) but use non-TT activity
       const transformed: ActivityChange[] = activeShifts.map((item, index) => {
-        const activityGroup = item.adhoc_ActivityGroup || "";
-        // TT activities have SyllabusPlus code from timetable
         const syllabusPlus = item.adhoc_SyllabusPlus || "";
-        const isTT = !!syllabusPlus;
+        const activityDescription = getActivityTypeDescription(item.ActivityTypeID);
+        const isTT = isActivityTypeTT(item.ActivityTypeID);
+
+        // Flag: Has SyllabusPlus (timetabled shift) BUT activity is NOT a TT: prefixed activity
+        // This indicates someone may have changed a timetabled activity to a non-TT activity
+        const shouldFlag = !!syllabusPlus && !isTT;
 
         return {
           id: item.Id || index,
@@ -152,11 +189,11 @@ export default function ActivitiesReport() {
           scheduleId: item.ScheduleID || null,
           scheduleDateRange: getScheduleDateRange(item.ScheduleID),
           assignedUser: getUsername(item.UserID),
-          activityDescription: activityGroup,
+          activityDescription: activityDescription,
           syllabusPlus: syllabusPlus,
           isTTActivity: isTT,
           unitCode: item.adhoc_UnitCode || "",
-          flagged: !isTT && item.ActivityTypeID != null, // Flag: has activity but no SyllabusPlus
+          flagged: shouldFlag,
         };
       });
 
@@ -182,29 +219,45 @@ export default function ActivitiesReport() {
     }
   }, [session, fromDate, toDate, selectedLocationId, locations]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (data.length === 0) return;
-    exportToExcel(data, "Activities_Report", columns);
+    setStatus("Exporting to Excel...");
+    const result = await exportToExcel(data, "Activities_Report", baseColumns);
+    if (result.success) {
+      setStatus(result.message);
+    } else {
+      setError(result.message);
+    }
   }, [data]);
 
   const flaggedCount = data.filter((d) => d.flagged).length;
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6" gutterBottom>
-        Activities Report (TT Changes)
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Flag inappropriate activity code changes from timetable (TT) to non-timetable activities.
+    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+        <Typography variant="h6">
+          Activities Report (TT Changes)
+        </Typography>
+        <Tooltip
+          title={
+            <>
+              <strong>Problem it solves:</strong> "Has someone incorrectly changed a timetabled activity to a non-timetable activity?"
+              <br /><br />
+              Catches TT→non-TT changes that could affect payroll coding. Rows flagged in red need review.
+              <br /><br />
+              <strong>Tip:</strong> Click the arrow icon on any row to open that schedule in Nimbus.
+            </>
+          }
+          arrow
+        >
+          <HelpOutlineIcon fontSize="small" color="action" sx={{ cursor: "help" }} />
+        </Tooltip>
         {flaggedCount > 0 && (
-          <Chip
-            label={`${flaggedCount} flagged`}
-            color="error"
-            size="small"
-            sx={{ ml: 1 }}
-          />
+          <Chip label={`${flaggedCount} flagged`} color="error" size="small" />
         )}
-        {status && <span style={{ marginLeft: 8, fontStyle: "italic" }}>{status}</span>}
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {status || "Flag inappropriate activity code changes from timetable (TT) to non-timetable activities."}
       </Typography>
 
       <ReportFilters
@@ -250,7 +303,7 @@ export default function ActivitiesReport() {
         disableRowSelectionOnClick
         getRowClassName={(params) => (params.row.flagged ? "flagged-row" : "")}
         sx={{
-          height: "calc(100vh - 340px)",
+          flex: 1,
           minHeight: 400,
           "& .flagged-row": {
             backgroundColor: "rgba(211, 47, 47, 0.1)",

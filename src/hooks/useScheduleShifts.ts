@@ -231,3 +231,194 @@ export async function fetchEmptyShifts(
     additionalFilter: "Deleted eq false and UserID eq null",
   });
 }
+
+/**
+ * Deleted ScheduleShiftAgreement data structure
+ * Represents an agreement that was removed from a shift
+ */
+export interface DeletedScheduleShiftAgreementData {
+  Id: number;
+  ScheduleShiftID: number;
+  AgreementID: number;
+  Deleted: boolean;
+  Updated?: string;
+  UpdatedBy?: number;
+  // Joined from ScheduleShift
+  shiftDescription?: string;
+  shiftStartTime?: string;
+  shiftFinishTime?: string;
+  shiftScheduleID?: number;
+  shiftDepartmentID?: number;
+  // Joined from Agreement
+  agreementDescription?: string;
+}
+
+/**
+ * Fetch deleted ScheduleShiftAgreement records - for Deleted Agreements Report
+ * These are agreements that were removed/deleted from shifts
+ */
+export async function fetchDeletedScheduleShiftAgreements(
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
+): Promise<DeletedScheduleShiftAgreementData[]> {
+  const { session, fromDate, toDate, onProgress } = options;
+
+  const pageSize = 500;
+  let offset = 0;
+  let hasMore = true;
+  const allRecords: DeletedScheduleShiftAgreementData[] = [];
+
+  const odataBase = `${session.base_url.replace(/\/$/, "")}/CoreAPI/Odata`;
+
+  // Filter by Updated date for deleted records
+  const filters: string[] = ["Deleted eq true"];
+  if (fromDate) {
+    filters.push(`Updated ge ${fromDate.startOf("day").toISOString()}`);
+  }
+  if (toDate) {
+    filters.push(`Updated lt ${toDate.endOf("day").toISOString()}`);
+  }
+  const filter = filters.join(" and ");
+
+  while (hasMore) {
+    onProgress?.(`Fetching deleted agreements: ${allRecords.length} loaded...`);
+
+    const url = `${odataBase}/ScheduleShiftAgreement?$top=${pageSize}&$skip=${offset}&$filter=${encodeURIComponent(filter)}&$orderby=Updated desc`;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await invoke<any>("execute_rest_get", {
+      url,
+      userId: session.user_id,
+      authToken: session.auth_token,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pageRecords: any[] = [];
+    if (response?.body) {
+      try {
+        const parsed = JSON.parse(response.body);
+        pageRecords = Array.isArray(parsed) ? parsed : parsed.value || [];
+      } catch {
+        console.error("Failed to parse OData response");
+      }
+    }
+
+    // Map to our interface
+    const mapped: DeletedScheduleShiftAgreementData[] = pageRecords.map(r => ({
+      Id: r.Id,
+      ScheduleShiftID: r.ScheduleShiftID,
+      AgreementID: r.AgreementID,
+      Deleted: r.Deleted,
+      Updated: r.Updated,
+      UpdatedBy: r.UpdatedBy,
+    }));
+
+    allRecords.push(...mapped);
+
+    if (pageRecords.length < pageSize) {
+      hasMore = false;
+    } else {
+      offset += pageSize;
+    }
+
+    // Safety limit
+    if (offset >= pageSize * 20) {
+      console.warn("Reached safety limit of 10000 records");
+      hasMore = false;
+    }
+  }
+
+  onProgress?.(`Loaded ${allRecords.length} deleted agreement records`);
+  return allRecords;
+}
+
+/**
+ * Schedule Shift History data structure
+ */
+export interface ScheduleShiftHistoryData {
+  Id: number;
+  ScheduleShiftID: number;
+  Description: string;
+  StartTime: string;
+  FinishTime: string;
+  Hours?: number;
+  Deleted: boolean;
+  Inserted: string;  // When this history record was created (the change timestamp)
+  InsertedBy: number;  // Who made this change
+  Updated?: string;
+  UpdatedBy?: number;
+  UserID?: number;
+  ActivityTypeID?: number;
+  JobRoleID?: number;
+  ScheduleID?: number;
+  DepartmentID?: number;
+}
+
+/**
+ * Fetch schedule shift history - for Change History Report
+ * Shows all historical changes to shifts within date range
+ */
+export async function fetchScheduleShiftHistory(
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
+): Promise<ScheduleShiftHistoryData[]> {
+  const { session, fromDate, toDate, onProgress } = options;
+
+  const pageSize = 500;
+  let offset = 0;
+  let hasMore = true;
+  const allRecords: ScheduleShiftHistoryData[] = [];
+
+  const odataBase = `${session.base_url.replace(/\/$/, "")}/CoreAPI/Odata`;
+
+  // Filter by the history record insertion date (when the change happened)
+  const filters: string[] = [];
+  if (fromDate) {
+    filters.push(`Inserted ge ${fromDate.startOf("day").toISOString()}`);
+  }
+  if (toDate) {
+    filters.push(`Inserted lt ${toDate.endOf("day").toISOString()}`);
+  }
+  const filter = filters.join(" and ");
+
+  while (hasMore) {
+    onProgress?.(`Fetching change history: ${allRecords.length} loaded...`);
+
+    let url = `${odataBase}/ScheduleShiftHistory?$top=${pageSize}&$skip=${offset}&$orderby=Inserted desc`;
+    if (filter) {
+      url += `&$filter=${encodeURIComponent(filter)}`;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await invoke<any>("execute_rest_get", {
+      url,
+      userId: session.user_id,
+      authToken: session.auth_token,
+    });
+
+    let pageRecords: ScheduleShiftHistoryData[] = [];
+    if (response?.body) {
+      try {
+        const parsed = JSON.parse(response.body);
+        pageRecords = Array.isArray(parsed) ? parsed : parsed.value || [];
+      } catch {
+        console.error("Failed to parse OData response");
+      }
+    }
+
+    allRecords.push(...pageRecords);
+
+    if (pageRecords.length < pageSize) {
+      hasMore = false;
+    } else {
+      offset += pageSize;
+    }
+
+    // Safety limit
+    if (offset >= pageSize * 20) {
+      console.warn("Reached safety limit of 10000 records");
+      hasMore = false;
+    }
+  }
+
+  onProgress?.(`Loaded ${allRecords.length} history records`);
+  return allRecords;
+}

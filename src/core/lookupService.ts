@@ -16,6 +16,9 @@ const userCache = new Map<number, UserInfo>();
 const locationCache = new Map<number, LocationInfo>();
 const departmentCache = new Map<number, DepartmentInfo>();
 const scheduleCache = new Map<number, ScheduleInfo>();
+const agreementCache = new Map<number, AgreementInfo>();
+const scheduleShiftCache = new Map<number, ScheduleShiftInfo>();
+const activityTypeCache = new Map<number, ActivityTypeInfo>();
 
 export interface UserInfo {
   id: number;
@@ -23,6 +26,7 @@ export interface UserInfo {
   forename: string;
   surname: string;
   fullName: string;
+  payroll: string;
 }
 
 export interface LocationInfo {
@@ -42,6 +46,27 @@ export interface ScheduleInfo {
   finishDate: string;
   dateRange: string;
   locationId: number | null;
+}
+
+export interface AgreementInfo {
+  id: number;
+  description: string;
+}
+
+export interface ScheduleShiftInfo {
+  id: number;
+  description: string;
+  startTime: string;
+  finishTime: string;
+  scheduleId: number | null;
+  departmentId: number | null;
+  userId: number | null;
+}
+
+export interface ActivityTypeInfo {
+  id: number;
+  description: string;
+  isTT: boolean; // True if description starts with "TT:"
 }
 
 /**
@@ -80,7 +105,8 @@ export async function loadUsers(session: Session): Promise<void> {
     Username: string;
     Forename: string;
     Surname: string;
-  }>(session, "User?$select=Id,Username,Forename,Surname");
+    Payroll: string;
+  }>(session, "User?$select=Id,Username,Forename,Surname,Payroll");
 
   for (const user of users) {
     userCache.set(user.Id, {
@@ -89,6 +115,7 @@ export async function loadUsers(session: Session): Promise<void> {
       forename: user.Forename || "",
       surname: user.Surname || "",
       fullName: `${user.Forename || ""} ${user.Surname || ""}`.trim() || user.Username || `User ${user.Id}`,
+      payroll: user.Payroll || "",
     });
   }
   console.log(`Loaded ${userCache.size} users into cache`);
@@ -132,6 +159,128 @@ export async function loadDepartments(session: Session): Promise<void> {
     });
   }
   console.log(`Loaded ${departmentCache.size} departments into cache`);
+}
+
+/**
+ * Load activity types into cache
+ */
+export async function loadActivityTypes(session: Session): Promise<void> {
+  if (activityTypeCache.size > 0) return;
+
+  const activityTypes = await fetchOData<{
+    Id: number;
+    Description: string;
+  }>(session, "ActivityType?$select=Id,Description");
+
+  for (const at of activityTypes) {
+    const description = at.Description || "";
+    activityTypeCache.set(at.Id, {
+      id: at.Id,
+      description,
+      isTT: description.startsWith("TT:"),
+    });
+  }
+  console.log(`Loaded ${activityTypeCache.size} activity types into cache`);
+}
+
+/**
+ * Get activity type info by ID
+ */
+export function getActivityType(activityTypeId: number | null | undefined): ActivityTypeInfo | null {
+  if (!activityTypeId) return null;
+  return activityTypeCache.get(activityTypeId) || null;
+}
+
+/**
+ * Get activity type description by ID
+ */
+export function getActivityTypeDescription(activityTypeId: number | null | undefined): string {
+  if (!activityTypeId) return "";
+  const at = activityTypeCache.get(activityTypeId);
+  return at?.description || `Activity ${activityTypeId}`;
+}
+
+/**
+ * Check if an activity type is a TT (timetabled) activity
+ */
+export function isActivityTypeTT(activityTypeId: number | null | undefined): boolean {
+  if (!activityTypeId) return false;
+  const at = activityTypeCache.get(activityTypeId);
+  return at?.isTT ?? false;
+}
+
+/**
+ * Load schedule shifts into cache - filtered by IDs for efficiency
+ */
+export async function loadScheduleShifts(session: Session, shiftIds: number[]): Promise<void> {
+  const missingIds = shiftIds.filter(id => id > 0 && !scheduleShiftCache.has(id));
+  if (missingIds.length === 0) return;
+
+  // Fetch in batches to avoid URL length limits
+  const batchSize = 50;
+  for (let i = 0; i < missingIds.length; i += batchSize) {
+    const batch = missingIds.slice(i, i + batchSize);
+    const filter = batch.map(id => `Id eq ${id}`).join(" or ");
+
+    const shifts = await fetchOData<{
+      Id: number;
+      Description: string;
+      StartTime: string;
+      FinishTime: string;
+      ScheduleID: number | null;
+      DepartmentID: number | null;
+      UserID: number | null;
+    }>(session, `ScheduleShift?$filter=${encodeURIComponent(filter)}&$select=Id,Description,StartTime,FinishTime,ScheduleID,DepartmentID,UserID`);
+
+    for (const shift of shifts) {
+      scheduleShiftCache.set(shift.Id, {
+        id: shift.Id,
+        description: shift.Description || "",
+        startTime: shift.StartTime || "",
+        finishTime: shift.FinishTime || "",
+        scheduleId: shift.ScheduleID || null,
+        departmentId: shift.DepartmentID || null,
+        userId: shift.UserID || null,
+      });
+    }
+  }
+  console.log(`Loaded ${scheduleShiftCache.size} schedule shifts into cache`);
+}
+
+/**
+ * Get schedule shift info by ID
+ */
+export function getScheduleShift(shiftId: number | null | undefined): ScheduleShiftInfo | null {
+  if (!shiftId) return null;
+  return scheduleShiftCache.get(shiftId) || null;
+}
+
+/**
+ * Load agreements into cache - filtered by IDs for efficiency
+ */
+export async function loadAgreements(session: Session, agreementIds: number[]): Promise<void> {
+  const missingIds = agreementIds.filter(id => id > 0 && !agreementCache.has(id));
+  if (missingIds.length === 0) return;
+
+  // Fetch in batches to avoid URL length limits
+  const batchSize = 50;
+  for (let i = 0; i < missingIds.length; i += batchSize) {
+    const batch = missingIds.slice(i, i + batchSize);
+    const filter = batch.map(id => `Id eq ${id}`).join(" or ");
+
+    const agreements = await fetchOData<{
+      Id: number;
+      Description: string;
+    }>(session, `Agreement?$filter=${encodeURIComponent(filter)}&$select=Id,Description`);
+
+    for (const agr of agreements) {
+      agreementCache.set(agr.Id, {
+        id: agr.Id,
+        description: agr.Description || `Agreement ${agr.Id}`,
+      });
+    }
+  }
+  console.log(`Loaded ${agreementCache.size} agreements into cache`);
 }
 
 /**
@@ -202,6 +351,26 @@ export function getUserFullName(userId: number | null | undefined): string {
 }
 
 /**
+ * Get user display name with username: "John Smith (jsmith)"
+ */
+export function getUserDisplayName(userId: number | null | undefined): string {
+  const user = getUser(userId);
+  if (!user) return userId ? `User ${userId}` : "Unknown";
+  if (user.fullName && user.username) {
+    return `${user.fullName} (${user.username})`;
+  }
+  return user.fullName || user.username || `User ${userId}`;
+}
+
+/**
+ * Get user payroll number by ID
+ */
+export function getUserPayroll(userId: number | null | undefined): string {
+  const user = getUser(userId);
+  return user?.payroll || "";
+}
+
+/**
  * Get location description by ID
  */
 export function getLocation(locationId: number | null | undefined): string {
@@ -247,6 +416,23 @@ export function getLocationViaSchedule(scheduleId: number | null | undefined): s
 }
 
 /**
+ * Get agreement info by ID
+ */
+export function getAgreement(agreementId: number | null | undefined): AgreementInfo | null {
+  if (!agreementId) return null;
+  return agreementCache.get(agreementId) || null;
+}
+
+/**
+ * Get agreement description by ID
+ */
+export function getAgreementDescription(agreementId: number | null | undefined): string {
+  if (!agreementId) return "";
+  const agr = agreementCache.get(agreementId);
+  return agr?.description || `Agreement ${agreementId}`;
+}
+
+/**
  * Clear all caches (useful for testing or when switching connections)
  */
 export function clearCaches(): void {
@@ -254,6 +440,9 @@ export function clearCaches(): void {
   locationCache.clear();
   departmentCache.clear();
   scheduleCache.clear();
+  agreementCache.clear();
+  scheduleShiftCache.clear();
+  activityTypeCache.clear();
 }
 
 /**
@@ -290,6 +479,9 @@ export async function loadAllLookups(
 
   onProgress?.("Loading departments...");
   await loadDepartments(session);
+
+  onProgress?.("Loading activity types...");
+  await loadActivityTypes(session);
 
   if (scheduleIds.length > 0) {
     onProgress?.("Loading schedules...");

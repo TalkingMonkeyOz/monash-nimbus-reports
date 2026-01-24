@@ -1,25 +1,36 @@
-import { useState, useCallback, useEffect } from "react";
-import { Paper, Typography, Alert, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, FormControlLabel, Checkbox, Chip } from "@mui/material";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { Paper, Typography, Alert, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, FormControlLabel, Checkbox, Chip, IconButton, Tooltip, Box } from "@mui/material";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
-import { fetchDeletedShifts, fetchEmptyShifts } from "../../hooks/useScheduleShifts";
+import { openNimbusSchedule } from "../../core/nimbusLinks";
+import { fetchEmptyShifts } from "../../hooks/useScheduleShifts";
 import {
-  loadAllLookups,
   loadLocations,
-  getUsername,
+  loadUsers,
+  loadDepartments,
+  loadSchedules,
+  getUserDisplayName,
   getDepartment,
   getScheduleDateRange,
   getLocationViaSchedule,
   getAllLocations,
+  getUserFullName,
   LocationInfo,
 } from "../../core/lookupService";
+import { fetchDeletedAgreementLinks, fetchShiftDetails, fetchAgreementDetails } from "../../core/agreementService";
 
 interface DeletedAgreement {
   id: number;
-  shiftStatus: "Deleted" | "Empty";
+  shiftId: number;
+  shiftStatus: "Deleted" | "Empty" | "Orphaned";
+  agreementDescription: string;
+  syllabusPlus: string;
+  allocatedUser: string;
   shiftDescription: string;
   shiftDate: string;
   shiftFrom: string;
@@ -28,43 +39,33 @@ interface DeletedAgreement {
   department: string;
   scheduleId: number | null;
   scheduleDateRange: string;
-  syllabusPlus: string;
-  activityDescription: string;
-  modifiedBy: string;
-  modifiedDate: string;
+  deletedBy: string;
+  deletedDate: string;
 }
 
-const columns: GridColDef<DeletedAgreement>[] = [
-  {
-    field: "shiftStatus",
-    headerName: "Status",
-    width: 100,
-    renderCell: (params: GridRenderCellParams<DeletedAgreement>) => (
-      <Chip
-        label={params.value}
-        color={params.value === "Deleted" ? "error" : "warning"}
-        size="small"
-      />
-    ),
-  },
-  { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
-  { field: "shiftDate", headerName: "Date", width: 110 },
-  { field: "shiftFrom", headerName: "From", width: 80 },
-  { field: "shiftTo", headerName: "To", width: 80 },
-  { field: "location", headerName: "Location", width: 140 },
-  { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
-  { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
-  { field: "syllabusPlus", headerName: "Syllabus Plus", width: 150 },
-  { field: "activityDescription", headerName: "Activity", flex: 1, minWidth: 150 },
-  { field: "modifiedBy", headerName: "Modified By", width: 180 },
-  { field: "modifiedDate", headerName: "Modified Date", width: 140 },
+// Base columns without the action column (for export)
+// Date columns first for easier scanning, then key identifiers, then details
+const baseColumns: GridColDef<DeletedAgreement>[] = [
+  { field: "shiftDate", headerName: "Date", width: 100 },
+  { field: "shiftFrom", headerName: "From", width: 60 },
+  { field: "shiftTo", headerName: "To", width: 60 },
+  { field: "shiftId", headerName: "Shift ID", width: 85, type: "number", description: "Sort by this column to group agreements from the same shift" },
+  { field: "agreementDescription", headerName: "Agreement", width: 180 },
+  { field: "syllabusPlus", headerName: "Syllabus Plus", width: 140 },
+  { field: "allocatedUser", headerName: "Allocated To", width: 180 },
+  { field: "shiftDescription", headerName: "Shift", flex: 1, minWidth: 150 },
+  { field: "location", headerName: "Location", width: 120 },
+  { field: "department", headerName: "Department", width: 120 },
+  { field: "scheduleId", headerName: "Schedule ID", width: 85, type: "number" },
+  { field: "scheduleDateRange", headerName: "Schedule Period", width: 140 },
+  { field: "deletedBy", headerName: "Deleted By", width: 200 },
+  { field: "deletedDate", headerName: "Deleted Date", width: 140 },
 ];
 
 export default function DeletedAgreementsReport() {
-  // Default to first week of March 2026 (where test data exists)
-  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs("2026-03-01"));
-  const [toDate, setToDate] = useState<Dayjs | null>(dayjs("2026-03-07"));
+  // Default to last 30 days
+  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(30, "day"));
+  const [toDate, setToDate] = useState<Dayjs | null>(dayjs());
   const [data, setData] = useState<DeletedAgreement[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,52 @@ export default function DeletedAgreementsReport() {
   const [includeEmptyShifts, setIncludeEmptyShifts] = useState(false);
 
   const { session } = useConnectionStore();
+
+  // Build columns with action column that uses session for Nimbus links
+  const columns: GridColDef<DeletedAgreement>[] = useMemo(() => [
+    {
+      field: "actions",
+      headerName: "",
+      width: 50,
+      sortable: false,
+      filterable: false,
+      disableColumnMenu: true,
+      renderCell: (params: GridRenderCellParams<DeletedAgreement>) => (
+        params.row.scheduleId ? (
+          <Tooltip title="Open in Nimbus">
+            <IconButton
+              size="small"
+              onClick={() => session && openNimbusSchedule(session.base_url, params.row.scheduleId)}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null
+      ),
+    },
+    {
+      field: "shiftStatus",
+      headerName: "Status",
+      width: 110,
+      type: "singleSelect",
+      valueOptions: ["Deleted", "Empty", "Orphaned"],
+      renderCell: (params: GridRenderCellParams<DeletedAgreement>) => {
+        const status = params.value as string;
+        const color = status === "Orphaned" ? "secondary" : status === "Deleted" ? "error" : "warning";
+        const tooltip = status === "Orphaned"
+          ? "Agreement link exists but the shift was hard-deleted from the database"
+          : status === "Deleted"
+          ? "Agreement was removed from this shift"
+          : "Shift has no person allocated";
+        return (
+          <Tooltip title={tooltip}>
+            <Chip label={status} color={color} size="small" />
+          </Tooltip>
+        );
+      },
+    },
+    ...baseColumns,
+  ], [session]);
 
   // Load locations for filter dropdown
   useEffect(() => {
@@ -109,19 +156,22 @@ export default function DeletedAgreementsReport() {
         auth_token: session.auth_token,
       };
 
-      // Fetch deleted shifts - server-side filtered for efficiency
-      setStatus("Fetching deleted shifts...");
-      const deletedShifts = await fetchDeletedShifts({
-        session: sessionData,
+      // Fetch DELETED ScheduleShiftAgreement records (agreements removed from shifts)
+      setStatus("Fetching deleted agreements...");
+      const deletedLinks = await fetchDeletedAgreementLinks(
+        sessionData,
         fromDate,
         toDate,
-        onProgress: setStatus,
-      });
+        setStatus
+      );
 
-      console.log(`Server returned ${deletedShifts.length} deleted shifts in date range`);
+      console.log(`Found ${deletedLinks.length} deleted agreement links in date range`);
+      if (deletedLinks.length > 0) {
+        console.log(`Sample link:`, deletedLinks[0]);
+      }
 
       // Optionally fetch empty/unallocated shifts
-      let emptyShifts: typeof deletedShifts = [];
+      let emptyShifts: Awaited<ReturnType<typeof fetchEmptyShifts>> = [];
       if (includeEmptyShifts) {
         setStatus("Fetching empty shifts...");
         emptyShifts = await fetchEmptyShifts({
@@ -130,38 +180,77 @@ export default function DeletedAgreementsReport() {
           toDate,
           onProgress: setStatus,
         });
-        console.log(`Server returned ${emptyShifts.length} empty shifts in date range`);
+        console.log(`Found ${emptyShifts.length} empty shifts in date range`);
       }
 
-      // Collect unique schedule IDs for batch lookup from both sets
-      const allShifts = [...deletedShifts, ...emptyShifts];
-      const scheduleIds = [...new Set(allShifts.map(s => s.ScheduleID).filter((id): id is number => id != null && id > 0))];
+      // Collect unique IDs for batch lookups
+      const shiftIds = [...new Set(deletedLinks.map(l => l.scheduleShiftId).filter(id => id > 0))];
+      const agreementIds = [...new Set(deletedLinks.map(l => l.agreementId).filter(id => id > 0))];
+      console.log(`Unique shift IDs: ${shiftIds.length}, first 5:`, shiftIds.slice(0, 5));
+      console.log(`Unique agreement IDs: ${agreementIds.length}, first 5:`, agreementIds.slice(0, 5));
+      const emptyShiftScheduleIds = [...new Set(emptyShifts.map(s => s.ScheduleID).filter((id): id is number => id != null && id > 0))];
 
-      // Load lookup data (users, locations, departments, schedules)
-      await loadAllLookups(sessionData, scheduleIds, setStatus);
+      // Load lookup data
+      setStatus("Loading users...");
+      await loadUsers(sessionData);
+      setStatus("Loading locations...");
+      await loadLocations(sessionData);
+      setStatus("Loading departments...");
+      await loadDepartments(sessionData);
 
-      // Transform deleted shifts
-      const transformedDeleted: DeletedAgreement[] = deletedShifts.map((item, index) => ({
-        id: item.Id || index,
-        shiftStatus: "Deleted" as const,
-        shiftDescription: item.Description || "",
-        shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
-        shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
-        shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
-        location: getLocationViaSchedule(item.ScheduleID),
-        department: getDepartment(item.DepartmentID),
-        scheduleId: item.ScheduleID || null,
-        scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        syllabusPlus: item.adhoc_SyllabusPlus || "",
-        activityDescription: item.adhoc_ActivityGroup || "",
-        modifiedBy: getUsername(item.UpdatedBy),
-        modifiedDate: item.Updated ? dayjs(item.Updated).format("DD/MM/YYYY HH:mm") : "",
-      }));
+      // Fetch shift details for the deleted agreement links
+      const shiftDetailsMap = await fetchShiftDetails(sessionData, shiftIds, setStatus);
 
-      // Transform empty shifts (use different ID range to avoid conflicts)
+      // Fetch agreement details
+      const agreementDetailsMap = await fetchAgreementDetails(sessionData, agreementIds, setStatus);
+
+      // Collect schedule IDs for schedule lookups
+      const scheduleIdsFromShifts = [...shiftDetailsMap.values()]
+        .map(s => s.scheduleId)
+        .filter((id): id is number => id != null && id > 0);
+      const allScheduleIds = [...new Set([...scheduleIdsFromShifts, ...emptyShiftScheduleIds])];
+
+      if (allScheduleIds.length > 0) {
+        setStatus("Loading schedules...");
+        await loadSchedules(sessionData, allScheduleIds);
+      }
+
+      // Transform deleted agreement links - ONE ROW PER DELETED AGREEMENT
+      const transformedDeleted: DeletedAgreement[] = deletedLinks.map((link, index) => {
+        const shift = shiftDetailsMap.get(link.scheduleShiftId);
+        const agreement = agreementDetailsMap.get(link.agreementId);
+
+        // Detect orphaned records - agreement link exists but shift was hard-deleted
+        const isOrphaned = !shift;
+
+        return {
+          id: link.id || index,
+          shiftId: link.scheduleShiftId,
+          shiftStatus: isOrphaned ? "Orphaned" as const : "Deleted" as const,
+          agreementDescription: agreement?.description || `Agreement ${link.agreementId}`,
+          syllabusPlus: shift?.syllabusPlus || "",
+          allocatedUser: isOrphaned ? "(Shift deleted)" : getUserFullName(shift?.userId),
+          shiftDescription: isOrphaned ? `[Shift ID: ${link.scheduleShiftId}]` : (shift?.description || ""),
+          shiftDate: shift?.startTime ? dayjs(shift.startTime).format("DD/MM/YYYY") : "",
+          shiftFrom: shift?.startTime ? dayjs(shift.startTime).format("HH:mm") : "",
+          shiftTo: shift?.finishTime ? dayjs(shift.finishTime).format("HH:mm") : "",
+          location: getLocationViaSchedule(shift?.scheduleId),
+          department: getDepartment(shift?.departmentId),
+          scheduleId: shift?.scheduleId || null,
+          scheduleDateRange: getScheduleDateRange(shift?.scheduleId),
+          deletedBy: getUserDisplayName(link.updatedBy),
+          deletedDate: link.updatedDate ? dayjs(link.updatedDate).format("DD/MM/YYYY HH:mm") : "",
+        };
+      });
+
+      // Transform empty shifts
       const transformedEmpty: DeletedAgreement[] = emptyShifts.map((item, index) => ({
         id: item.Id || (index + 100000),
+        shiftId: item.Id,
         shiftStatus: "Empty" as const,
+        agreementDescription: "",
+        syllabusPlus: item.adhoc_SyllabusPlus || "",
+        allocatedUser: "",
         shiftDescription: item.Description || "",
         shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
         shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
@@ -170,10 +259,8 @@ export default function DeletedAgreementsReport() {
         department: getDepartment(item.DepartmentID),
         scheduleId: item.ScheduleID || null,
         scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        syllabusPlus: item.adhoc_SyllabusPlus || "",
-        activityDescription: item.adhoc_ActivityGroup || "",
-        modifiedBy: "",
-        modifiedDate: "",
+        deletedBy: "",
+        deletedDate: "",
       }));
 
       // Combine both
@@ -189,8 +276,20 @@ export default function DeletedAgreementsReport() {
 
       setData(filtered);
       const deletedCount = filtered.filter(f => f.shiftStatus === "Deleted").length;
+      const orphanedCount = filtered.filter(f => f.shiftStatus === "Orphaned").length;
       const emptyCount = filtered.filter(f => f.shiftStatus === "Empty").length;
-      setStatus(`Found ${deletedCount} deleted${includeEmptyShifts ? `, ${emptyCount} empty` : ""} shifts${selectedLocationName ? ` at ${selectedLocationName}` : ""}`);
+
+      let statusMsg = `Found ${deletedCount} deleted agreements`;
+      if (orphanedCount > 0) {
+        statusMsg += `, ${orphanedCount} orphaned (shift hard-deleted)`;
+      }
+      if (includeEmptyShifts) {
+        statusMsg += `, ${emptyCount} empty shifts`;
+      }
+      if (selectedLocationName) {
+        statusMsg += ` at ${selectedLocationName}`;
+      }
+      setStatus(statusMsg);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -200,19 +299,48 @@ export default function DeletedAgreementsReport() {
     }
   }, [session, fromDate, toDate, selectedLocationId, locations, includeEmptyShifts]);
 
-  const handleExport = useCallback(() => {
+  // Columns for export (exclude action buttons, include status)
+  const exportColumns: GridColDef<DeletedAgreement>[] = useMemo(() => [
+    { field: "shiftStatus", headerName: "Status", width: 100 },
+    ...baseColumns,
+  ], []);
+
+  const handleExport = useCallback(async () => {
     if (data.length === 0) return;
-    exportToExcel(data, "Deleted_Agreements_Report", columns);
-  }, [data]);
+    setStatus("Exporting to Excel...");
+    const result = await exportToExcel(data, "Deleted_Agreements_Report", exportColumns);
+    if (result.success) {
+      setStatus(result.message);
+    } else {
+      setError(result.message);
+    }
+  }, [data, exportColumns]);
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6" gutterBottom>
-        Deleted Agreements Report
-      </Typography>
+    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+        <Typography variant="h6">
+          Deleted Agreements Report
+        </Typography>
+        <Tooltip
+          title={
+            <>
+              <strong>Problem it solves:</strong> "Who removed this agreement from a shift? Was it a mistake or fraud?"
+              <br /><br />
+              Tracks when agreements are removed from shifts. This helps identify potential payroll issues where someone might remove an agreement that pays more and replace it with one that pays less.
+              <br /><br />
+              <strong>Note:</strong> One row per deleted agreement. A shift may appear multiple times if multiple agreements were removed.
+              <br /><br />
+              <strong>Tip:</strong> Click the arrow icon to open the schedule in Nimbus.
+            </>
+          }
+          arrow
+        >
+          <HelpOutlineIcon fontSize="small" color="action" sx={{ cursor: "help" }} />
+        </Tooltip>
+      </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Track agreement deletions and identify who performed them.
-        {status && <span style={{ marginLeft: 8, fontStyle: "italic" }}>{status}</span>}
+        {status || "Track agreement deletions and identify who performed them."}
       </Typography>
 
       <ReportFilters
@@ -267,7 +395,7 @@ export default function DeletedAgreementsReport() {
         }}
         disableRowSelectionOnClick
         sx={{
-          height: "calc(100vh - 340px)",
+          flex: 1,
           minHeight: 400,
         }}
       />

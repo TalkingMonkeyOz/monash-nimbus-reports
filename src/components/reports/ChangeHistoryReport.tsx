@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, IconButton, Tooltip, Box } from "@mui/material";
+import { Paper, Typography, Alert, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, IconButton, Tooltip, Box } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
@@ -8,11 +8,11 @@ import ReportFilters from "./ReportFilters";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { openNimbusSchedule } from "../../core/nimbusLinks";
-import { fetchShiftsMissingActivity } from "../../hooks/useScheduleShifts";
+import { fetchScheduleShiftHistory } from "../../hooks/useScheduleShifts";
 import {
   loadAllLookups,
   loadLocations,
-  getUsername,
+  getUserDisplayName,
   getDepartment,
   getScheduleDateRange,
   getLocationViaSchedule,
@@ -20,41 +20,45 @@ import {
   LocationInfo,
 } from "../../core/lookupService";
 
-interface MissingActivity {
+interface ChangeHistoryRow {
   id: number;
+  scheduleShiftId: number;
   shiftDescription: string;
   shiftDate: string;
   shiftFrom: string;
   shiftTo: string;
+  changeDate: string;
+  changedBy: string;
   location: string;
   department: string;
   scheduleId: number | null;
   scheduleDateRange: string;
-  assignedPerson: string;
-  unitCode: string;
-  activityStatus: string;
+  allocatedPerson: string;
+  activityTypeId: number | null;
+  wasDeleted: boolean;
 }
 
-// Base columns for export - date first for easier scanning
-const baseColumns: GridColDef<MissingActivity>[] = [
-  { field: "shiftDate", headerName: "Date", width: 110 },
+// Base columns for export
+const baseColumns: GridColDef<ChangeHistoryRow>[] = [
+  { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
+  { field: "shiftDate", headerName: "Shift Date", width: 110 },
   { field: "shiftFrom", headerName: "From", width: 80 },
   { field: "shiftTo", headerName: "To", width: 80 },
-  { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
-  { field: "assignedPerson", headerName: "Assigned Person", width: 180 },
-  { field: "unitCode", headerName: "Unit Code", width: 100 },
+  { field: "changeDate", headerName: "Change Date", width: 150 },
+  { field: "changedBy", headerName: "Changed By", width: 220 },
+  { field: "allocatedPerson", headerName: "Allocated Person", width: 200 },
   { field: "location", headerName: "Location", width: 140 },
   { field: "department", headerName: "Department", width: 140 },
   { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
   { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
-  { field: "activityStatus", headerName: "Activity Status", width: 130 },
+  { field: "wasDeleted", headerName: "Deleted", width: 80 },
 ];
 
-export default function MissingActivitiesReport() {
-  // Default to last 30 days
-  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(30, "day"));
+export default function ChangeHistoryReport() {
+  // Default to last 7 days
+  const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(7, "day"));
   const [toDate, setToDate] = useState<Dayjs | null>(dayjs());
-  const [data, setData] = useState<MissingActivity[]>([]);
+  const [data, setData] = useState<ChangeHistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -64,7 +68,7 @@ export default function MissingActivitiesReport() {
   const { session } = useConnectionStore();
 
   // Build columns with action column
-  const columns: GridColDef<MissingActivity>[] = useMemo(() => [
+  const columns: GridColDef<ChangeHistoryRow>[] = useMemo(() => [
     {
       field: "actions",
       headerName: "",
@@ -72,7 +76,7 @@ export default function MissingActivitiesReport() {
       sortable: false,
       filterable: false,
       disableColumnMenu: true,
-      renderCell: (params: GridRenderCellParams<MissingActivity>) => (
+      renderCell: (params: GridRenderCellParams<ChangeHistoryRow>) => (
         params.row.scheduleId ? (
           <Tooltip title="Open in Nimbus">
             <IconButton
@@ -85,15 +89,7 @@ export default function MissingActivitiesReport() {
         ) : null
       ),
     },
-    ...baseColumns.slice(0, 10), // All columns before activityStatus
-    {
-      field: "activityStatus",
-      headerName: "Activity Status",
-      width: 130,
-      renderCell: () => (
-        <Chip label="MISSING" color="warning" size="small" />
-      ),
-    },
+    ...baseColumns,
   ], [session]);
 
   // Load locations for filter dropdown
@@ -130,36 +126,40 @@ export default function MissingActivitiesReport() {
         auth_token: session.auth_token,
       };
 
-      // Fetch shifts with user but missing activity - server-side filtered
-      const missingActivityShifts = await fetchShiftsMissingActivity({
+      // Fetch change history
+      setStatus("Fetching change history...");
+      const history = await fetchScheduleShiftHistory({
         session: sessionData,
         fromDate,
         toDate,
         onProgress: setStatus,
       });
 
-      console.log(`Server returned ${missingActivityShifts.length} shifts with missing activities`);
+      console.log(`Fetched ${history.length} history records`);
 
-      // Collect unique schedule IDs for batch lookup
-      const scheduleIds = [...new Set(missingActivityShifts.map(s => s.ScheduleID).filter((id): id is number => id != null && id > 0))];
+      // Collect unique schedule IDs
+      const scheduleIds = [...new Set(history.map(h => h.ScheduleID).filter((id): id is number => id != null && id > 0))];
 
-      // Load lookup data (users, locations, departments, schedules)
+      // Load lookup data
       await loadAllLookups(sessionData, scheduleIds, setStatus);
 
-      // Transform to report format with lookups
-      const transformed: MissingActivity[] = missingActivityShifts.map((item, index) => ({
+      // Transform data
+      const transformed: ChangeHistoryRow[] = history.map((item, index) => ({
         id: item.Id || index,
+        scheduleShiftId: item.ScheduleShiftID,
         shiftDescription: item.Description || "",
         shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
         shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
         shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
+        changeDate: item.Inserted ? dayjs(item.Inserted).format("DD/MM/YYYY HH:mm") : "",
+        changedBy: getUserDisplayName(item.InsertedBy),
         location: getLocationViaSchedule(item.ScheduleID),
         department: getDepartment(item.DepartmentID),
         scheduleId: item.ScheduleID || null,
         scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        assignedPerson: getUsername(item.UserID),
-        unitCode: item.adhoc_UnitCode || "",
-        activityStatus: "Missing",
+        allocatedPerson: getUserDisplayName(item.UserID),
+        activityTypeId: item.ActivityTypeID || null,
+        wasDeleted: item.Deleted,
       }));
 
       // Filter by location if selected
@@ -171,11 +171,11 @@ export default function MissingActivitiesReport() {
         : transformed;
 
       setData(filtered);
-      setStatus(`Found ${filtered.length} shifts with missing activities${selectedLocationName ? ` at ${selectedLocationName}` : ""}`);
+      setStatus(`Found ${filtered.length} change records${selectedLocationName ? ` at ${selectedLocationName}` : ""}`);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
-      setError(message || "Failed to load report data");
+      setError(message || "Failed to load change history");
     } finally {
       setLoading(false);
     }
@@ -184,7 +184,7 @@ export default function MissingActivitiesReport() {
   const handleExport = useCallback(async () => {
     if (data.length === 0) return;
     setStatus("Exporting to Excel...");
-    const result = await exportToExcel(data, "Missing_Activities_Report", baseColumns);
+    const result = await exportToExcel(data, "Change_History_Report", baseColumns);
     if (result.success) {
       setStatus(result.message);
     } else {
@@ -196,28 +196,25 @@ export default function MissingActivitiesReport() {
     <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
         <Typography variant="h6">
-          Missing Activities Report
+          Change History Report
         </Typography>
         <Tooltip
           title={
             <>
-              <strong>Problem it solves:</strong> "Someone is allocated but what are they doing?"
+              <strong>Problem it solves:</strong> "Who changed this allocation and when?"
               <br /><br />
-              Identifies incomplete allocations where a person is assigned but no activity is specified. These need an activity assigned to complete the allocation.
+              Shows all changes made to shifts/allocations within the date range, including who made each change and what was modified.
               <br /><br />
-              <strong>Tip:</strong> Click the arrow icon on any row to open that schedule in Nimbus.
+              <strong>Note:</strong> Date filter is based on when the change was made, not the shift date.
             </>
           }
           arrow
         >
           <HelpOutlineIcon fontSize="small" color="action" sx={{ cursor: "help" }} />
         </Tooltip>
-        {data.length > 0 && (
-          <Chip label={`${data.length} missing`} color="warning" size="small" />
-        )}
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {status || "Identify shifts with person allocation but missing activity assignment."}
+        {status || "Track all changes to allocations - who changed what, and when."}
       </Typography>
 
       <ReportFilters
@@ -259,6 +256,7 @@ export default function MissingActivitiesReport() {
         pageSizeOptions={[25, 50, 100]}
         initialState={{
           pagination: { paginationModel: { pageSize: 25 } },
+          sorting: { sortModel: [{ field: "changeDate", sort: "desc" }] },
         }}
         disableRowSelectionOnClick
         sx={{

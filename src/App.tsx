@@ -39,6 +39,7 @@ import DeletedAgreementsReport from "./components/reports/DeletedAgreementsRepor
 import ActivitiesReport from "./components/reports/ActivitiesReport";
 import MissingActivitiesReport from "./components/reports/MissingActivitiesReport";
 import MissingJobRolesReport from "./components/reports/MissingJobRolesReport";
+import ChangeHistoryReport from "./components/reports/ChangeHistoryReport";
 import type { Profile, NimbusCredentials } from "./core/types";
 import { useConnectionStore } from "./stores/connectionStore";
 
@@ -50,8 +51,8 @@ interface TabPanelProps {
 
 function TabPanel({ children, value, index }: TabPanelProps) {
   return (
-    <div role="tabpanel" hidden={value !== index}>
-      {value === index && <Box sx={{ py: 2 }}>{children}</Box>}
+    <div role="tabpanel" hidden={value !== index} style={{ height: value === index ? "100%" : 0, display: value === index ? "flex" : "none", flexDirection: "column" }}>
+      {value === index && <Box sx={{ py: 1, flex: 1, display: "flex", flexDirection: "column" }}>{children}</Box>}
     </div>
   );
 }
@@ -155,7 +156,7 @@ function App() {
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="xl" sx={{ flex: 1, py: 2, overflow: "auto" }}>
+      <Container maxWidth={false} sx={{ flex: 1, py: 1, px: 2, overflow: "auto" }}>
         {showSettings ? (
           <ConnectionModule
             onConnected={handleConnected}
@@ -182,8 +183,8 @@ function App() {
             </Button>
           </Paper>
         ) : (
-          <>
-            <Paper sx={{ mb: 2 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Paper sx={{ mb: 1, flexShrink: 0 }}>
               <Tabs
                 value={tabValue}
                 onChange={handleTabChange}
@@ -194,22 +195,28 @@ function App() {
                 <Tab label="Activities (TT Changes)" />
                 <Tab label="Missing Activities" />
                 <Tab label="Missing Job Roles" />
+                <Tab label="Change History" />
               </Tabs>
             </Paper>
 
-            <TabPanel value={tabValue} index={0}>
-              <DeletedAgreementsReport />
-            </TabPanel>
-            <TabPanel value={tabValue} index={1}>
-              <ActivitiesReport />
-            </TabPanel>
-            <TabPanel value={tabValue} index={2}>
-              <MissingActivitiesReport />
-            </TabPanel>
-            <TabPanel value={tabValue} index={3}>
-              <MissingJobRolesReport />
-            </TabPanel>
-          </>
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <TabPanel value={tabValue} index={0}>
+                <DeletedAgreementsReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={1}>
+                <ActivitiesReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={2}>
+                <MissingActivitiesReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={3}>
+                <MissingJobRolesReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={4}>
+                <ChangeHistoryReport />
+              </TabPanel>
+            </Box>
+          </Box>
         )}
       </Container>
 
@@ -233,13 +240,13 @@ function App() {
                 primary="Deleted Agreements Report"
                 secondary={
                   <>
-                    <strong>Purpose:</strong> Track agreement deletions and identify who performed them.
+                    <strong>Problem it solves:</strong> "Why was this shift deleted? Who did it?" - Helps investigate unexpected deletions and identify patterns of incorrect data changes.
                     <br />
-                    <strong>Criteria:</strong> Shows all shifts marked as deleted within the selected date range.
+                    <strong>Criteria:</strong> All shifts marked as deleted within the date range.
                     <br />
-                    <strong>Option:</strong> Check "Include empty/unallocated shifts" to also show shifts with no person assigned.
+                    <strong>Option:</strong> "Include empty shifts" also shows unallocated shifts (no person assigned).
                     <br />
-                    <strong>Key fields:</strong> Status (Deleted/Empty), Modified By (username), Modified Date, Location.
+                    <strong>Key fields:</strong> Modified By, Modified Date, Location, Schedule ID.
                   </>
                 }
               />
@@ -254,11 +261,11 @@ function App() {
                 primary="Activities Report (TT Changes)"
                 secondary={
                   <>
-                    <strong>Purpose:</strong> Flag inappropriate activity code changes from timetable to non-timetable activities.
+                    <strong>Problem it solves:</strong> "Has someone incorrectly changed a timetabled activity to a non-timetable activity?" - Catches inappropriate TT→non-TT changes that could affect payroll coding.
                     <br />
-                    <strong>Criteria:</strong> Shifts with ActivityType but missing Syllabus Plus code (TT activities should have this).
+                    <strong>Criteria:</strong> Shifts with activities that lack the "TT:" prefix but have a Syllabus Plus code.
                     <br />
-                    <strong>Flagged:</strong> Rows highlighted in red indicate potential TT→non-TT changes that need review.
+                    <strong>Flagged (red):</strong> Rows that need review - potential incorrect activity code changes.
                   </>
                 }
               />
@@ -273,11 +280,11 @@ function App() {
                 primary="Missing Activities Report"
                 secondary={
                   <>
-                    <strong>Purpose:</strong> Identify shifts with person allocation but missing activity assignment.
+                    <strong>Problem it solves:</strong> "Someone is allocated but what are they doing?" - Identifies incomplete allocations where a person is assigned but no activity is specified.
                     <br />
-                    <strong>Criteria:</strong> Shifts where UserID is set (person allocated) but ActivityTypeID is null.
+                    <strong>Criteria:</strong> Shifts with a person allocated but no activity type set.
                     <br />
-                    <strong>Action:</strong> These shifts need an activity assigned to complete the allocation.
+                    <strong>Action needed:</strong> Assign the appropriate activity to complete the allocation.
                   </>
                 }
               />
@@ -292,11 +299,30 @@ function App() {
                 primary="Missing Job Roles Report"
                 secondary={
                   <>
-                    <strong>Purpose:</strong> Identify shifts that don't have a job role assigned.
+                    <strong>Problem it solves:</strong> "This shift doesn't have a job role - it may not cost correctly." - Finds configuration gaps that could affect payroll processing.
                     <br />
-                    <strong>Criteria:</strong> Active (non-deleted) shifts where JobRoleID is null.
+                    <strong>Criteria:</strong> Active shifts without a job role assigned.
                     <br />
-                    <strong>Action:</strong> Assign appropriate job roles to complete shift configuration.
+                    <strong>Action needed:</strong> Assign the appropriate job role for correct costing.
+                  </>
+                }
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            <ListItem>
+              <ListItemIcon>
+                <InfoIcon color="primary" />
+              </ListItemIcon>
+              <ListItemText
+                primary="Change History Report"
+                secondary={
+                  <>
+                    <strong>Problem it solves:</strong> "Who changed this allocation and when?" - Tracks all modifications to shifts and allocations for audit purposes.
+                    <br />
+                    <strong>Criteria:</strong> All change records within the date range (based on change date, not shift date).
+                    <br />
+                    <strong>Use case:</strong> Investigate why an allocation was changed, who made the change, and when.
                   </>
                 }
               />
@@ -309,16 +335,22 @@ function App() {
             How to Use
           </Typography>
           <Typography variant="body2" paragraph>
-            1. <strong>Connect:</strong> Click the settings icon (⚙️) to configure and connect to a Nimbus server.
+            1. <strong>Connect:</strong> Click the settings icon to configure and connect to a Nimbus server.
           </Typography>
           <Typography variant="body2" paragraph>
             2. <strong>Select dates:</strong> Use the date pickers to set your reporting period.
           </Typography>
           <Typography variant="body2" paragraph>
-            3. <strong>Search:</strong> Click "Search" to load data from Nimbus.
+            3. <strong>Filter:</strong> Optionally select a location to narrow results.
           </Typography>
           <Typography variant="body2" paragraph>
-            4. <strong>Export:</strong> Click "Export" to download results as an Excel file.
+            4. <strong>Search:</strong> Click "Search" to load data from Nimbus.
+          </Typography>
+          <Typography variant="body2" paragraph>
+            5. <strong>Open in Nimbus:</strong> Click the arrow icon on any row to open that schedule directly in Nimbus.
+          </Typography>
+          <Typography variant="body2" paragraph>
+            6. <strong>Export:</strong> Click "Export" to download the current filtered results as an Excel file.
           </Typography>
 
           <Divider sx={{ my: 2 }} />
