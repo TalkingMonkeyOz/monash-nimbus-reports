@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Paper, Typography, Alert, Chip, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, IconButton, Tooltip, Box } from "@mui/material";
+import { Paper, Typography, Alert, Chip, IconButton, Tooltip, Box } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import CascadingLocationFilter from "../filters/CascadingLocationFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { openNimbusSchedule } from "../../core/nimbusLinks";
@@ -16,11 +17,14 @@ import {
   getDepartment,
   getScheduleDateRange,
   getLocationViaSchedule,
-  getAllLocations,
+  getLocationIdViaSchedule,
   getActivityTypeDescription,
   isActivityTypeTT,
-  LocationInfo,
 } from "../../core/lookupService";
+import {
+  loadLocationGroupHierarchy,
+  resolveLocationsForGroup,
+} from "../../core/locationGroupService";
 
 interface ActivityChange {
   id: number;
@@ -29,6 +33,7 @@ interface ActivityChange {
   shiftFrom: string;
   shiftTo: string;
   location: string;
+  locationId: number | null;
   department: string;
   scheduleId: number | null;
   scheduleDateRange: string;
@@ -66,8 +71,9 @@ export default function ActivitiesReport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
-  const [locations, setLocations] = useState<LocationInfo[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | "">("");
   const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
+  const [dataVersion, setDataVersion] = useState(0);
 
   const { session } = useConnectionStore();
 
@@ -117,22 +123,25 @@ export default function ActivitiesReport() {
     },
   ], [session]);
 
-  // Load locations for filter dropdown
+  // Load locations and location groups for filter dropdowns
   useEffect(() => {
     if (session) {
-      loadLocations({
+      const sessionData = {
         base_url: session.base_url,
         user_id: session.user_id,
         auth_token: session.auth_token,
-      }).then(() => {
-        setLocations(getAllLocations());
+      };
+
+      // Load both locations and location groups in parallel
+      Promise.all([
+        loadLocations(sessionData),
+        loadLocationGroupHierarchy(sessionData),
+      ]).then(() => {
+        // Increment dataVersion to trigger filter re-render with loaded data
+        setDataVersion((v) => v + 1);
       });
     }
   }, [session]);
-
-  const handleLocationChange = (event: SelectChangeEvent<number | "">) => {
-    setSelectedLocationId(event.target.value as number | "");
-  };
 
   const handleSearch = useCallback(async () => {
     if (!session) {
@@ -185,6 +194,7 @@ export default function ActivitiesReport() {
           shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
           shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
           location: getLocationViaSchedule(item.ScheduleID),
+          locationId: getLocationIdViaSchedule(item.ScheduleID),
           department: getDepartment(item.DepartmentID),
           scheduleId: item.ScheduleID || null,
           scheduleDateRange: getScheduleDateRange(item.ScheduleID),
@@ -200,16 +210,25 @@ export default function ActivitiesReport() {
       // Sort flagged items first
       transformed.sort((a, b) => (b.flagged ? 1 : 0) - (a.flagged ? 1 : 0));
 
-      // Filter by location if selected
-      const selectedLocationName = selectedLocationId
-        ? locations.find(l => l.id === selectedLocationId)?.description
-        : null;
-      const filtered = selectedLocationName
-        ? transformed.filter(item => item.location === selectedLocationName)
-        : transformed;
+      // Filter by location group and/or specific location
+      let filtered = transformed;
+
+      if (selectedGroupId) {
+        // Get all location IDs in the selected group (including nested groups)
+        const groupLocationIds = resolveLocationsForGroup(selectedGroupId);
+        filtered = filtered.filter(
+          (item) => item.locationId !== null && groupLocationIds.has(item.locationId)
+        );
+      }
+
+      if (selectedLocationId) {
+        // Further filter to specific location
+        filtered = filtered.filter((item) => item.locationId === selectedLocationId);
+      }
 
       setData(filtered);
-      setStatus(`Found ${filtered.length} shifts (${filtered.filter(t => t.flagged).length} flagged)${selectedLocationName ? ` at ${selectedLocationName}` : ""}`);
+      const filterDesc = selectedGroupId || selectedLocationId ? " (filtered)" : "";
+      setStatus(`Found ${filtered.length} shifts (${filtered.filter(t => t.flagged).length} flagged)${filterDesc}`);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -217,7 +236,7 @@ export default function ActivitiesReport() {
     } finally {
       setLoading(false);
     }
-  }, [session, fromDate, toDate, selectedLocationId, locations]);
+  }, [session, fromDate, toDate, selectedGroupId, selectedLocationId]);
 
   const handleExport = useCallback(async () => {
     if (data.length === 0) return;
@@ -269,21 +288,13 @@ export default function ActivitiesReport() {
         onExport={handleExport}
         loading={loading}
       >
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Location</InputLabel>
-          <Select
-            value={selectedLocationId}
-            onChange={handleLocationChange}
-            label="Location"
-          >
-            <MenuItem value="">All Locations</MenuItem>
-            {locations.map((loc) => (
-              <MenuItem key={loc.id} value={loc.id}>
-                {loc.description}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <CascadingLocationFilter
+          selectedGroupId={selectedGroupId}
+          selectedLocationId={selectedLocationId}
+          onGroupChange={setSelectedGroupId}
+          onLocationChange={setSelectedLocationId}
+          dataVersion={dataVersion}
+        />
       </ReportFilters>
 
       {error && (

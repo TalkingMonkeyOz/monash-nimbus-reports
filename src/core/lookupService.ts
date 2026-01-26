@@ -21,6 +21,9 @@ const scheduleShiftCache = new Map<number, ScheduleShiftInfo>();
 const activityTypeCache = new Map<number, ActivityTypeInfo>();
 const agreementTypeCache = new Map<number, AgreementTypeInfo>();
 
+// Cached sorted arrays for fast access (rebuilt when data loads)
+let cachedLocationArray: LocationInfo[] | null = null;
+
 // ============================================================================
 // User Search Index - Optimized for 21k+ users with type-ahead
 // ============================================================================
@@ -277,6 +280,12 @@ export async function loadLocations(session: Session): Promise<void> {
       description: loc.Description || `Location ${loc.Id}`,
     });
   }
+
+  // Build cached sorted array for fast getAllLocations()
+  cachedLocationArray = Array.from(locationCache.values()).sort((a, b) =>
+    a.description.localeCompare(b.description)
+  );
+
   console.log(`Loaded ${locationCache.size} locations into cache`);
 }
 
@@ -621,6 +630,15 @@ export function getLocationViaSchedule(scheduleId: number | null | undefined): s
 }
 
 /**
+ * Get location ID via schedule (ScheduleShift -> Schedule -> LocationID)
+ */
+export function getLocationIdViaSchedule(scheduleId: number | null | undefined): number | null {
+  if (!scheduleId) return null;
+  const sched = getSchedule(scheduleId);
+  return sched?.locationId || null;
+}
+
+/**
  * Get agreement info by ID
  */
 export function getAgreement(agreementId: number | null | undefined): AgreementInfo | null {
@@ -648,6 +666,7 @@ export function clearCaches(): void {
   agreementCache.clear();
   scheduleShiftCache.clear();
   activityTypeCache.clear();
+  cachedLocationArray = null;
   agreementTypeCache.clear();
 
   // Clear user search index
@@ -661,6 +680,10 @@ export function clearCaches(): void {
  * Get all locations as array for dropdown
  */
 export function getAllLocations(): LocationInfo[] {
+  // Use cached sorted array for O(1) access
+  if (cachedLocationArray) return cachedLocationArray;
+
+  // Fallback to building array (shouldn't happen after load)
   return Array.from(locationCache.values()).sort((a, b) =>
     a.description.localeCompare(b.description)
   );

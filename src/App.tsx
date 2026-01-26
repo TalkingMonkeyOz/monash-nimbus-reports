@@ -38,7 +38,6 @@ import ConnectionModule from "./components/ConnectionModule";
 import ReportPreferences from "./components/ReportPreferences";
 import DeletedAgreementsReport from "./components/reports/DeletedAgreementsReport";
 import ActivitiesReport from "./components/reports/ActivitiesReport";
-import ActivitiesReportAG from "./components/reports/ActivitiesReportAG";
 import MissingActivitiesReport from "./components/reports/MissingActivitiesReport";
 import MissingJobRolesReport from "./components/reports/MissingJobRolesReport";
 import ChangeHistoryReport from "./components/reports/ChangeHistoryReport";
@@ -213,7 +212,6 @@ function App() {
               >
                 <Tab label="Deleted Agreements" />
                 <Tab label="Activities (TT Changes)" />
-                <Tab label="Activities (AG Grid)" sx={{ color: "primary.main" }} />
                 <Tab label="Missing Activities" />
                 <Tab label="Missing Job Roles" />
                 <Tab label="Change History" />
@@ -228,15 +226,12 @@ function App() {
                 <ActivitiesReport />
               </TabPanel>
               <TabPanel value={tabValue} index={2}>
-                <ActivitiesReportAG />
-              </TabPanel>
-              <TabPanel value={tabValue} index={3}>
                 <MissingActivitiesReport />
               </TabPanel>
-              <TabPanel value={tabValue} index={4}>
+              <TabPanel value={tabValue} index={3}>
                 <MissingJobRolesReport />
               </TabPanel>
-              <TabPanel value={tabValue} index={5}>
+              <TabPanel value={tabValue} index={4}>
                 <ChangeHistoryReport />
               </TabPanel>
             </Box>

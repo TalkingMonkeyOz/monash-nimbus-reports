@@ -250,10 +250,14 @@ export default function LocationGroupFilter({
   const renderTags = useCallback(
     (tagValue: SelectionItem[], getTagProps: (params: { index: number }) => object) =>
       tagValue.map((item, index) => {
+        const tagProps = getTagProps({ index });
         if (item.type === "all") {
+          // "All Locations" chip is not deletable - select something else to clear it
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { onDelete, ...restProps } = tagProps as { onDelete?: () => void };
           return (
             <Chip
-              {...getTagProps({ index })}
+              {...restProps}
               key="all-locations"
               label="All Locations"
               size="small"
@@ -265,7 +269,7 @@ export default function LocationGroupFilter({
         }
         return (
           <Chip
-            {...getTagProps({ index })}
+            {...tagProps}
             key={item.type === "group" ? `g-${item.data.id}` : `l-${item.data.id}`}
             label={item.data.description}
             size="small"

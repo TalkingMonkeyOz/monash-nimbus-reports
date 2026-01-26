@@ -46,6 +46,15 @@ const groupCache = new Map<number, LocationGroupNode>();
 let hierarchyLoaded = false;
 let lastLoadTime: Date | null = null;
 
+// Precomputed resolved locations for each group (computed once on load)
+const resolvedLocationsCache = new Map<number, Set<number>>();
+
+// Precomputed location counts per group (for fast display)
+const locationCountCache = new Map<number, number>();
+
+// Cached sorted array of all groups (rebuilt once after load)
+let cachedGroupArray: LocationGroupInfo[] | null = null;
+
 // Cache TTL: 24 hours (hierarchy rarely changes)
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -167,6 +176,9 @@ export async function loadLocationGroupHierarchy(
   hierarchyLoaded = true;
   lastLoadTime = new Date();
 
+  // Precompute resolved locations for all groups (avoids repeated DFS on render)
+  precomputeResolvedLocations();
+
   onProgress?.(`Location group hierarchy loaded (${groups.length} groups)`);
 }
 
@@ -175,10 +187,66 @@ export async function loadLocationGroupHierarchy(
 // ============================================================================
 
 /**
+ * Precompute resolved locations for all groups
+ * Called once when hierarchy loads - avoids repeated DFS traversals
+ */
+function precomputeResolvedLocations(): void {
+  resolvedLocationsCache.clear();
+  locationCountCache.clear();
+
+  // Helper function for DFS traversal
+  function computeForGroup(groupId: number): Set<number> {
+    // Check cache first (memoization)
+    const cached = resolvedLocationsCache.get(groupId);
+    if (cached) return cached;
+
+    const locations = new Set<number>();
+    const visited = new Set<number>();
+
+    function traverse(gid: number) {
+      if (visited.has(gid)) return;
+      visited.add(gid);
+
+      const node = groupCache.get(gid);
+      if (!node) return;
+
+      node.directLocationIds.forEach((lid) => locations.add(lid));
+      node.childGroupIds.forEach((childId) => traverse(childId));
+    }
+
+    traverse(groupId);
+    resolvedLocationsCache.set(groupId, locations);
+    locationCountCache.set(groupId, locations.size);
+    return locations;
+  }
+
+  // Precompute for all groups
+  for (const groupId of groupCache.keys()) {
+    computeForGroup(groupId);
+  }
+
+  // Build cached sorted array of groups
+  cachedGroupArray = Array.from(groupCache.values())
+    .map((node) => ({
+      id: node.id,
+      description: node.description,
+      orgCode: node.orgCode,
+    }))
+    .sort((a, b) => a.description.localeCompare(b.description));
+
+  console.log(`Precomputed resolved locations for ${resolvedLocationsCache.size} groups`);
+}
+
+/**
  * Resolve ALL location IDs for a group, including all nested child groups
- * Uses DFS with visited set to prevent cycles
+ * Uses precomputed cache for performance (falls back to DFS if not cached)
  */
 export function resolveLocationsForGroup(groupId: number): Set<number> {
+  // Use precomputed cache if available
+  const cached = resolvedLocationsCache.get(groupId);
+  if (cached) return cached;
+
+  // Fallback to DFS if not cached (shouldn't happen after load)
   const locations = new Set<number>();
   const visited = new Set<number>();
 
@@ -262,9 +330,13 @@ export function getLocationGroup(groupId: number): LocationGroupInfo | null {
 
 /**
  * Get all location groups as array for dropdown
- * Sorted by description
+ * Sorted by description - uses cached array for O(1) access
  */
 export function getAllLocationGroups(): LocationGroupInfo[] {
+  // Use cached array if available
+  if (cachedGroupArray) return cachedGroupArray;
+
+  // Fallback to building array (shouldn't happen after load)
   return Array.from(groupCache.values())
     .map((node) => ({
       id: node.id,
@@ -297,8 +369,14 @@ export function getRootLocationGroups(): LocationGroupInfo[] {
 
 /**
  * Get location count for a group (including nested groups)
+ * Uses precomputed cache for O(1) lookup
  */
 export function getLocationCountForGroup(groupId: number): number {
+  // Use precomputed cache if available
+  const cached = locationCountCache.get(groupId);
+  if (cached !== undefined) return cached;
+
+  // Fallback to computing (shouldn't happen after load)
   return resolveLocationsForGroup(groupId).size;
 }
 
@@ -342,6 +420,9 @@ export function searchLocationGroups(
  */
 export function clearLocationGroupCache(): void {
   groupCache.clear();
+  resolvedLocationsCache.clear();
+  locationCountCache.clear();
+  cachedGroupArray = null;
   hierarchyLoaded = false;
   lastLoadTime = null;
   console.log("LocationGroup cache cleared");
