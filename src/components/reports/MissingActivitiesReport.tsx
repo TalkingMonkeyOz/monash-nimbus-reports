@@ -287,6 +287,14 @@ export default function MissingActivitiesReport() {
           "& .MuiDataGrid-scrollbar--horizontal": {
             display: "block",
           },
+          // Pin first column (actions)
+          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
+            position: "sticky",
+            left: 0,
+            backgroundColor: "#fff",
+            zIndex: 1,
+            borderRight: "1px solid rgba(224, 224, 224, 1)",
+          },
         }}
       />
     </Paper>

@@ -511,12 +511,19 @@ export default function DeletedAgreementsReport() {
         sx={{
           flex: 1,
           minHeight: 400,
-          // Fix horizontal scroll - ensure scrollbar is always visible
           "& .MuiDataGrid-virtualScroller": {
             overflowX: "auto",
           },
           "& .MuiDataGrid-scrollbar--horizontal": {
             display: "block",
+          },
+          // Pin first column (actions)
+          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
+            position: "sticky",
+            left: 0,
+            backgroundColor: "#fff",
+            zIndex: 1,
+            borderRight: "1px solid rgba(224, 224, 224, 1)",
           },
         }}
       />
