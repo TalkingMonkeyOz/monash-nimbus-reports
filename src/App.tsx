@@ -35,6 +35,7 @@ import PersonOffIcon from "@mui/icons-material/PersonOff";
 import WorkOffIcon from "@mui/icons-material/WorkOff";
 import { APP_VERSION, checkForUpdates, VersionInfo } from "./core/versionService";
 import ConnectionModule from "./components/ConnectionModule";
+import ReportPreferences from "./components/ReportPreferences";
 import DeletedAgreementsReport from "./components/reports/DeletedAgreementsReport";
 import ActivitiesReport from "./components/reports/ActivitiesReport";
 import MissingActivitiesReport from "./components/reports/MissingActivitiesReport";
@@ -60,6 +61,7 @@ function TabPanel({ children, value, index }: TabPanelProps) {
 function App() {
   const [tabValue, setTabValue] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState(0); // 0 = Connections, 1 = Preferences
   const [isConnected, setIsConnected] = useState(false);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const [credentials, setCredentials] = useState<NimbusCredentials | null>(null);
@@ -158,13 +160,30 @@ function App() {
 
       <Container maxWidth={false} sx={{ flex: 1, py: 1, px: 2, overflow: "auto" }}>
         {showSettings ? (
-          <ConnectionModule
-            onConnected={handleConnected}
-            onDisconnected={handleDisconnected}
-            isConnected={isConnected}
-            currentProfile={currentProfile}
-            credentials={credentials}
-          />
+          <Box>
+            <Paper sx={{ mb: 2 }}>
+              <Tabs
+                value={settingsTab}
+                onChange={(_, v) => setSettingsTab(v)}
+                indicatorColor="primary"
+                textColor="primary"
+              >
+                <Tab label="Connections" />
+                <Tab label="Report Preferences" disabled={!isConnected} />
+              </Tabs>
+            </Paper>
+            {settingsTab === 0 ? (
+              <ConnectionModule
+                onConnected={handleConnected}
+                onDisconnected={handleDisconnected}
+                isConnected={isConnected}
+                currentProfile={currentProfile}
+                credentials={credentials}
+              />
+            ) : (
+              <ReportPreferences />
+            )}
+          </Box>
         ) : !isConnected ? (
           <Paper sx={{ p: 4, textAlign: "center", mt: 4 }}>
             <Typography variant="h5" gutterBottom>

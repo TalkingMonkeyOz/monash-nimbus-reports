@@ -1,10 +1,13 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Paper, Typography, Alert, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, FormControlLabel, Checkbox, Chip, IconButton, Tooltip, Box } from "@mui/material";
+import { Paper, Typography, Alert, FormControlLabel, Checkbox, Chip, IconButton, Tooltip, Box, Stack, Divider } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import LocationGroupFilter from "../filters/LocationGroupFilter";
+import PersonLookupFilter from "../filters/PersonLookupFilter";
+import AgreementTypeFilter from "../filters/AgreementTypeFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { openNimbusSchedule } from "../../core/nimbusLinks";
@@ -14,20 +17,26 @@ import {
   loadUsers,
   loadDepartments,
   loadSchedules,
+  loadAgreementTypes,
   getUserDisplayName,
   getDepartment,
   getScheduleDateRange,
   getLocationViaSchedule,
-  getAllLocations,
   getUserFullName,
-  LocationInfo,
+  getSchedule,
 } from "../../core/lookupService";
 import { fetchDeletedAgreementLinks, fetchShiftDetails, fetchAgreementDetails } from "../../core/agreementService";
+import {
+  loadLocationGroupHierarchy,
+  resolveLocationsForGroups,
+  isHierarchyLoaded,
+} from "../../core/locationGroupService";
 
 interface DeletedAgreement {
   id: number;
   shiftId: number;
   shiftStatus: "Deleted" | "Empty" | "Orphaned";
+  agreementId: number | null;
   agreementDescription: string;
   syllabusPlus: string;
   allocatedUser: string;
@@ -36,10 +45,12 @@ interface DeletedAgreement {
   shiftFrom: string;
   shiftTo: string;
   location: string;
+  locationId: number | null;
   department: string;
   scheduleId: number | null;
   scheduleDateRange: string;
   deletedBy: string;
+  deletedByUserId: number | null;
   deletedDate: string;
 }
 
@@ -63,18 +74,64 @@ const baseColumns: GridColDef<DeletedAgreement>[] = [
 ];
 
 export default function DeletedAgreementsReport() {
-  // Default to last 30 days
+  const { session } = useConnectionStore();
+
+  // State with sensible defaults (no auto-restore to avoid infinite loops)
   const [fromDate, setFromDate] = useState<Dayjs | null>(dayjs().subtract(30, "day"));
   const [toDate, setToDate] = useState<Dayjs | null>(dayjs());
   const [data, setData] = useState<DeletedAgreement[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
-  const [locations, setLocations] = useState<LocationInfo[]>([]);
-  const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
   const [includeEmptyShifts, setIncludeEmptyShifts] = useState(false);
 
-  const { session } = useConnectionStore();
+  // Location group filter state
+  const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
+  const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
+  const [hierarchyLoaded, setHierarchyLoaded] = useState(false);
+
+  // Person filter state (filter by who deleted)
+  const [deletedByUserId, setDeletedByUserId] = useState<number | null>(null);
+
+  // Agreement type filter state
+  const [selectedAgreementTypeIds, setSelectedAgreementTypeIds] = useState<number[]>([]);
+  const [excludedAgreementTypeIds, setExcludedAgreementTypeIds] = useState<number[]>([]);
+  const [agreementTypesLoaded, setAgreementTypesLoaded] = useState(false);
+
+  // Note: Auto-save removed to prevent infinite loops. Use Report Preferences for persistent settings.
+
+  // Load location group hierarchy and agreement types
+  useEffect(() => {
+    if (session && !hierarchyLoaded) {
+      const sessionData = {
+        base_url: session.base_url,
+        user_id: session.user_id,
+        auth_token: session.auth_token,
+      };
+      loadLocationGroupHierarchy(sessionData, setStatus).then(() => {
+        setHierarchyLoaded(true);
+      });
+    }
+  }, [session, hierarchyLoaded]);
+
+  useEffect(() => {
+    if (session && !agreementTypesLoaded) {
+      const sessionData = {
+        base_url: session.base_url,
+        user_id: session.user_id,
+        auth_token: session.auth_token,
+      };
+      loadAgreementTypes(sessionData).then(() => {
+        setAgreementTypesLoaded(true);
+      });
+    }
+  }, [session, agreementTypesLoaded]);
+
+  // Handle location group selection change
+  const handleLocationSelectionChange = useCallback((groupIds: number[], locationIds: number[]) => {
+    setSelectedGroupIds(groupIds);
+    setSelectedLocationIds(locationIds);
+  }, []);
 
   // Build columns with action column that uses session for Nimbus links
   const columns: GridColDef<DeletedAgreement>[] = useMemo(() => [
@@ -121,23 +178,6 @@ export default function DeletedAgreementsReport() {
     },
     ...baseColumns,
   ], [session]);
-
-  // Load locations for filter dropdown
-  useEffect(() => {
-    if (session) {
-      loadLocations({
-        base_url: session.base_url,
-        user_id: session.user_id,
-        auth_token: session.auth_token,
-      }).then(() => {
-        setLocations(getAllLocations());
-      });
-    }
-  }, [session]);
-
-  const handleLocationChange = (event: SelectChangeEvent<number | "">) => {
-    setSelectedLocationId(event.target.value as number | "");
-  };
 
   const handleSearch = useCallback(async () => {
     if (!session) {
@@ -215,10 +255,23 @@ export default function DeletedAgreementsReport() {
         await loadSchedules(sessionData, allScheduleIds);
       }
 
+      // Resolve location IDs from selected groups
+      const resolvedLocationIds = new Set<number>();
+      if (selectedGroupIds.length > 0 && isHierarchyLoaded()) {
+        const fromGroups = resolveLocationsForGroups(selectedGroupIds);
+        fromGroups.forEach(lid => resolvedLocationIds.add(lid));
+      }
+      // Add individually selected locations
+      selectedLocationIds.forEach(lid => resolvedLocationIds.add(lid));
+
       // Transform deleted agreement links - ONE ROW PER DELETED AGREEMENT
       const transformedDeleted: DeletedAgreement[] = deletedLinks.map((link, index) => {
         const shift = shiftDetailsMap.get(link.scheduleShiftId);
         const agreement = agreementDetailsMap.get(link.agreementId);
+
+        // Get location ID via schedule
+        const schedule = getSchedule(shift?.scheduleId);
+        const locationId = schedule?.locationId || null;
 
         // Detect orphaned records - agreement link exists but shift was hard-deleted
         const isOrphaned = !shift;
@@ -227,6 +280,7 @@ export default function DeletedAgreementsReport() {
           id: link.id || index,
           shiftId: link.scheduleShiftId,
           shiftStatus: isOrphaned ? "Orphaned" as const : "Deleted" as const,
+          agreementId: link.agreementId,
           agreementDescription: agreement?.description || `Agreement ${link.agreementId}`,
           syllabusPlus: shift?.syllabusPlus || "",
           allocatedUser: isOrphaned ? "(Shift deleted)" : getUserFullName(shift?.userId),
@@ -235,49 +289,76 @@ export default function DeletedAgreementsReport() {
           shiftFrom: shift?.startTime ? dayjs(shift.startTime).format("HH:mm") : "",
           shiftTo: shift?.finishTime ? dayjs(shift.finishTime).format("HH:mm") : "",
           location: getLocationViaSchedule(shift?.scheduleId),
+          locationId,
           department: getDepartment(shift?.departmentId),
           scheduleId: shift?.scheduleId || null,
           scheduleDateRange: getScheduleDateRange(shift?.scheduleId),
           deletedBy: getUserDisplayName(link.updatedBy),
+          deletedByUserId: link.updatedBy || null,
           deletedDate: link.updatedDate ? dayjs(link.updatedDate).format("DD/MM/YYYY HH:mm") : "",
         };
       });
 
       // Transform empty shifts
-      const transformedEmpty: DeletedAgreement[] = emptyShifts.map((item, index) => ({
-        id: item.Id || (index + 100000),
-        shiftId: item.Id,
-        shiftStatus: "Empty" as const,
-        agreementDescription: "",
-        syllabusPlus: item.adhoc_SyllabusPlus || "",
-        allocatedUser: "",
-        shiftDescription: item.Description || "",
-        shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
-        shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
-        shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
-        location: getLocationViaSchedule(item.ScheduleID),
-        department: getDepartment(item.DepartmentID),
-        scheduleId: item.ScheduleID || null,
-        scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        deletedBy: "",
-        deletedDate: "",
-      }));
+      const transformedEmpty: DeletedAgreement[] = emptyShifts.map((item, index) => {
+        const schedule = getSchedule(item.ScheduleID);
+        return {
+          id: item.Id || (index + 100000),
+          shiftId: item.Id,
+          shiftStatus: "Empty" as const,
+          agreementId: null,
+          agreementDescription: "",
+          syllabusPlus: item.adhoc_SyllabusPlus || "",
+          allocatedUser: "",
+          shiftDescription: item.Description || "",
+          shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
+          shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
+          shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
+          location: getLocationViaSchedule(item.ScheduleID),
+          locationId: schedule?.locationId || null,
+          department: getDepartment(item.DepartmentID),
+          scheduleId: item.ScheduleID || null,
+          scheduleDateRange: getScheduleDateRange(item.ScheduleID),
+          deletedBy: "",
+          deletedByUserId: null,
+          deletedDate: "",
+        };
+      });
 
       // Combine both
-      const combined = [...transformedDeleted, ...transformedEmpty];
+      let combined = [...transformedDeleted, ...transformedEmpty];
 
-      // Filter by location if selected
-      const selectedLocationName = selectedLocationId
-        ? locations.find(l => l.id === selectedLocationId)?.description
-        : null;
-      const filtered = selectedLocationName
-        ? combined.filter(item => item.location === selectedLocationName)
-        : combined;
+      // Apply filters
+      // 1. Location filter (using resolved location IDs from groups)
+      if (resolvedLocationIds.size > 0) {
+        combined = combined.filter(item =>
+          item.locationId !== null && resolvedLocationIds.has(item.locationId)
+        );
+      }
 
-      setData(filtered);
-      const deletedCount = filtered.filter(f => f.shiftStatus === "Deleted").length;
-      const orphanedCount = filtered.filter(f => f.shiftStatus === "Orphaned").length;
-      const emptyCount = filtered.filter(f => f.shiftStatus === "Empty").length;
+      // 2. Deleted by person filter
+      if (deletedByUserId !== null) {
+        combined = combined.filter(item => item.deletedByUserId === deletedByUserId);
+      }
+
+      // 3. Agreement type filter (include only selected types)
+      if (selectedAgreementTypeIds.length > 0) {
+        combined = combined.filter(item =>
+          item.agreementId !== null && selectedAgreementTypeIds.includes(item.agreementId)
+        );
+      }
+
+      // 4. Excluded agreement types
+      if (excludedAgreementTypeIds.length > 0) {
+        combined = combined.filter(item =>
+          item.agreementId === null || !excludedAgreementTypeIds.includes(item.agreementId)
+        );
+      }
+
+      setData(combined);
+      const deletedCount = combined.filter(f => f.shiftStatus === "Deleted").length;
+      const orphanedCount = combined.filter(f => f.shiftStatus === "Orphaned").length;
+      const emptyCount = combined.filter(f => f.shiftStatus === "Empty").length;
 
       let statusMsg = `Found ${deletedCount} deleted agreements`;
       if (orphanedCount > 0) {
@@ -286,8 +367,8 @@ export default function DeletedAgreementsReport() {
       if (includeEmptyShifts) {
         statusMsg += `, ${emptyCount} empty shifts`;
       }
-      if (selectedLocationName) {
-        statusMsg += ` at ${selectedLocationName}`;
+      if (resolvedLocationIds.size > 0) {
+        statusMsg += ` (filtered by ${resolvedLocationIds.size} locations)`;
       }
       setStatus(statusMsg);
     } catch (err) {
@@ -297,7 +378,7 @@ export default function DeletedAgreementsReport() {
     } finally {
       setLoading(false);
     }
-  }, [session, fromDate, toDate, selectedLocationId, locations, includeEmptyShifts]);
+  }, [session, fromDate, toDate, selectedGroupIds, selectedLocationIds, deletedByUserId, selectedAgreementTypeIds, excludedAgreementTypeIds, includeEmptyShifts]);
 
   // Columns for export (exclude action buttons, include status)
   const exportColumns: GridColDef<DeletedAgreement>[] = useMemo(() => [
@@ -317,7 +398,7 @@ export default function DeletedAgreementsReport() {
   }, [data, exportColumns]);
 
   return (
-    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
+    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
         <Typography variant="h6">
           Deleted Agreements Report
@@ -352,21 +433,6 @@ export default function DeletedAgreementsReport() {
         onExport={handleExport}
         loading={loading}
       >
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Location</InputLabel>
-          <Select
-            value={selectedLocationId}
-            onChange={handleLocationChange}
-            label="Location"
-          >
-            <MenuItem value="">All Locations</MenuItem>
-            {locations.map((loc) => (
-              <MenuItem key={loc.id} value={loc.id}>
-                {loc.description}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
         <FormControlLabel
           control={
             <Checkbox
@@ -378,6 +444,45 @@ export default function DeletedAgreementsReport() {
           label="Include empty/unallocated shifts"
         />
       </ReportFilters>
+
+      {/* Advanced Filters */}
+      <Stack direction="row" spacing={2} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
+        <LocationGroupFilter
+          selectedGroupIds={selectedGroupIds}
+          selectedLocationIds={selectedLocationIds}
+          onSelectionChange={handleLocationSelectionChange}
+          disabled={loading || !hierarchyLoaded}
+          loaded={hierarchyLoaded}
+          showLocations
+          size="small"
+          minWidth={320}
+          label="Filter by Location/Group"
+        />
+        <PersonLookupFilter
+          value={deletedByUserId}
+          onChange={setDeletedByUserId}
+          label="Deleted By"
+          placeholder="Search who deleted..."
+          disabled={loading}
+          size="small"
+          minWidth={280}
+        />
+        <AgreementTypeFilter
+          selectedIds={selectedAgreementTypeIds}
+          onChange={setSelectedAgreementTypeIds}
+          excludedIds={excludedAgreementTypeIds}
+          onExcludedChange={setExcludedAgreementTypeIds}
+          vacantShiftId={1} // Vacant Shift agreement ID (confirmed from DB)
+          disabled={loading || !agreementTypesLoaded}
+          loaded={agreementTypesLoaded}
+          size="small"
+          minWidth={280}
+          label="Agreement Types"
+          mode="include"
+        />
+      </Stack>
+
+      <Divider sx={{ mb: 1 }} />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -397,6 +502,13 @@ export default function DeletedAgreementsReport() {
         sx={{
           flex: 1,
           minHeight: 400,
+          // Fix horizontal scroll - ensure scrollbar is always visible
+          "& .MuiDataGrid-virtualScroller": {
+            overflowX: "auto",
+          },
+          "& .MuiDataGrid-scrollbar--horizontal": {
+            display: "block",
+          },
         }}
       />
     </Paper>

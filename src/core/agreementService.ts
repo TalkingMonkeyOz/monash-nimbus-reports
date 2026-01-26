@@ -155,6 +155,9 @@ export async function fetchDeletedAgreementLinks(
   return result;
 }
 
+// Fields to select for ScheduleShift - adhoc fields require explicit $select!
+const SHIFT_SELECT_FIELDS = "Id,Description,StartTime,FinishTime,ScheduleID,DepartmentID,UserID,adhoc_SyllabusPlus";
+
 /**
  * Fetch ScheduleShift details for given IDs
  */
@@ -186,7 +189,9 @@ export async function fetchShiftDetails(
     const records = await fetchODataPaged<any>(
       session,
       "ScheduleShift",
-      filter
+      filter,
+      undefined,
+      SHIFT_SELECT_FIELDS  // Must include $select for adhoc fields!
     );
 
     console.log(`[AgreementService] Batch returned ${records.length} records`);

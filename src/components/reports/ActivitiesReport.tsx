@@ -233,7 +233,7 @@ export default function ActivitiesReport() {
   const flaggedCount = data.filter((d) => d.flagged).length;
 
   return (
-    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column" }}>
+    <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
         <Typography variant="h6">
           Activities Report (TT Changes)
@@ -307,6 +307,12 @@ export default function ActivitiesReport() {
           minHeight: 400,
           "& .flagged-row": {
             backgroundColor: "rgba(211, 47, 47, 0.1)",
+          },
+          "& .MuiDataGrid-virtualScroller": {
+            overflowX: "auto",
+          },
+          "& .MuiDataGrid-scrollbar--horizontal": {
+            display: "block",
           },
         }}
       />

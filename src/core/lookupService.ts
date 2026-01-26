@@ -19,6 +19,137 @@ const scheduleCache = new Map<number, ScheduleInfo>();
 const agreementCache = new Map<number, AgreementInfo>();
 const scheduleShiftCache = new Map<number, ScheduleShiftInfo>();
 const activityTypeCache = new Map<number, ActivityTypeInfo>();
+const agreementTypeCache = new Map<number, AgreementTypeInfo>();
+
+// ============================================================================
+// User Search Index - Optimized for 21k+ users with type-ahead
+// ============================================================================
+
+interface UserSearchIndex {
+  // Maps lowercase tokens to user IDs for fast prefix matching
+  byNameToken: Map<string, Set<number>>; // "john" → [1, 45, 892]
+  byPayroll: Map<string, number>; // "12345" → 1 (exact match)
+  byUsername: Map<string, number>; // "jsmith" → 1 (exact match)
+  built: boolean;
+}
+
+const userSearchIndex: UserSearchIndex = {
+  byNameToken: new Map(),
+  byPayroll: new Map(),
+  byUsername: new Map(),
+  built: false,
+};
+
+/**
+ * Build the user search index after loading users
+ * Called automatically by loadUsers()
+ */
+function buildUserSearchIndex(): void {
+  if (userSearchIndex.built) return;
+
+  userSearchIndex.byNameToken.clear();
+  userSearchIndex.byPayroll.clear();
+  userSearchIndex.byUsername.clear();
+
+  for (const [id, user] of userCache) {
+    // Index by name tokens (forename, surname)
+    const nameTokens = `${user.forename} ${user.surname}`
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length >= 2);
+
+    for (const token of nameTokens) {
+      if (!userSearchIndex.byNameToken.has(token)) {
+        userSearchIndex.byNameToken.set(token, new Set());
+      }
+      userSearchIndex.byNameToken.get(token)!.add(id);
+    }
+
+    // Index by payroll (exact match, lowercase)
+    if (user.payroll) {
+      userSearchIndex.byPayroll.set(user.payroll.toLowerCase(), id);
+    }
+
+    // Index by username (exact match, lowercase)
+    if (user.username) {
+      userSearchIndex.byUsername.set(user.username.toLowerCase(), id);
+    }
+  }
+
+  userSearchIndex.built = true;
+  console.log(
+    `User search index built: ${userSearchIndex.byNameToken.size} name tokens, ${userSearchIndex.byPayroll.size} payrolls`
+  );
+}
+
+/**
+ * Search users by query string (name, payroll, or username)
+ * Returns up to `limit` results, prioritizing exact matches
+ */
+export function searchUsers(query: string, limit: number = 20): UserInfo[] {
+  if (!query || query.length < 2) return [];
+  if (!userSearchIndex.built) return [];
+
+  const lowerQuery = query.toLowerCase().trim();
+  const results = new Map<number, UserInfo>(); // Use Map to dedupe
+
+  // 1. Exact payroll match (highest priority)
+  const payrollMatch = userSearchIndex.byPayroll.get(lowerQuery);
+  if (payrollMatch !== undefined) {
+    const user = userCache.get(payrollMatch);
+    if (user) results.set(payrollMatch, user);
+  }
+
+  // 2. Exact username match
+  const usernameMatch = userSearchIndex.byUsername.get(lowerQuery);
+  if (usernameMatch !== undefined && !results.has(usernameMatch)) {
+    const user = userCache.get(usernameMatch);
+    if (user) results.set(usernameMatch, user);
+  }
+
+  // 3. Prefix match on name tokens
+  if (results.size < limit) {
+    // Find all tokens that START WITH the query
+    const matchingIds = new Set<number>();
+    for (const [token, ids] of userSearchIndex.byNameToken) {
+      if (token.startsWith(lowerQuery)) {
+        ids.forEach((id) => matchingIds.add(id));
+      }
+    }
+
+    // Add to results up to limit
+    for (const id of matchingIds) {
+      if (results.size >= limit) break;
+      if (!results.has(id)) {
+        const user = userCache.get(id);
+        if (user) results.set(id, user);
+      }
+    }
+  }
+
+  // 4. If still under limit, do partial username match
+  if (results.size < limit) {
+    for (const [username, id] of userSearchIndex.byUsername) {
+      if (results.size >= limit) break;
+      if (!results.has(id) && username.includes(lowerQuery)) {
+        const user = userCache.get(id);
+        if (user) results.set(id, user);
+      }
+    }
+  }
+
+  // Sort by full name and return as array
+  return Array.from(results.values()).sort((a, b) =>
+    a.fullName.localeCompare(b.fullName)
+  );
+}
+
+/**
+ * Check if user search index is ready
+ */
+export function isUserSearchIndexReady(): boolean {
+  return userSearchIndex.built;
+}
 
 export interface UserInfo {
   id: number;
@@ -67,6 +198,11 @@ export interface ActivityTypeInfo {
   id: number;
   description: string;
   isTT: boolean; // True if description starts with "TT:"
+}
+
+export interface AgreementTypeInfo {
+  id: number;
+  description: string;
 }
 
 /**
@@ -119,6 +255,9 @@ export async function loadUsers(session: Session): Promise<void> {
     });
   }
   console.log(`Loaded ${userCache.size} users into cache`);
+
+  // Build search index for fast type-ahead
+  buildUserSearchIndex();
 }
 
 /**
@@ -207,6 +346,72 @@ export function isActivityTypeTT(activityTypeId: number | null | undefined): boo
   if (!activityTypeId) return false;
   const at = activityTypeCache.get(activityTypeId);
   return at?.isTT ?? false;
+}
+
+// ============================================================================
+// Agreement Types (for dynamic filtering)
+// ============================================================================
+
+/**
+ * Load agreement types into cache - for agreement type filter dropdown
+ * IMPORTANT: Load dynamically, never hardcode agreement IDs!
+ * AgreementType = 2 is for shift/person agreements (the relevant ones for reports)
+ */
+export async function loadAgreementTypes(session: Session): Promise<void> {
+  if (agreementTypeCache.size > 0) return;
+
+  try {
+    console.log("Loading agreement types from OData (AgreementType=2)...");
+    const agreements = await fetchOData<{
+      Id: number;
+      Description: string;
+    }>(session, "Agreement?$filter=Active eq true and Deleted eq false and AgreementType eq 2&$select=Id,Description&$orderby=Description");
+
+    console.log(`OData returned ${agreements?.length || 0} agreements`);
+
+    for (const agr of agreements) {
+      agreementTypeCache.set(agr.Id, {
+        id: agr.Id,
+        description: agr.Description || `Agreement ${agr.Id}`,
+      });
+    }
+    console.log(`Loaded ${agreementTypeCache.size} agreement types into cache`);
+  } catch (err) {
+    console.error("Failed to load agreement types:", err);
+  }
+}
+
+/**
+ * Get agreement type by ID
+ */
+export function getAgreementType(agreementId: number | null | undefined): AgreementTypeInfo | null {
+  if (!agreementId) return null;
+  return agreementTypeCache.get(agreementId) || null;
+}
+
+/**
+ * Get all agreement types as array for filter dropdown
+ */
+export function getAllAgreementTypes(): AgreementTypeInfo[] {
+  return Array.from(agreementTypeCache.values()).sort((a, b) =>
+    a.description.localeCompare(b.description)
+  );
+}
+
+/**
+ * Check if agreement types have been loaded
+ */
+export function isAgreementTypesLoaded(): boolean {
+  return agreementTypeCache.size > 0;
+}
+
+/**
+ * Get all users as array for dropdown (use searchUsers for large lists!)
+ */
+export function getAllUsers(): UserInfo[] {
+  return Array.from(userCache.values()).sort((a, b) =>
+    a.fullName.localeCompare(b.fullName)
+  );
 }
 
 /**
@@ -443,6 +648,13 @@ export function clearCaches(): void {
   agreementCache.clear();
   scheduleShiftCache.clear();
   activityTypeCache.clear();
+  agreementTypeCache.clear();
+
+  // Clear user search index
+  userSearchIndex.byNameToken.clear();
+  userSearchIndex.byPayroll.clear();
+  userSearchIndex.byUsername.clear();
+  userSearchIndex.built = false;
 }
 
 /**

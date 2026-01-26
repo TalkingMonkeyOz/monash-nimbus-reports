@@ -83,6 +83,34 @@ function buildODataFilter(
 }
 
 /**
+ * Fields to select from ScheduleShift - includes adhoc fields
+ * IMPORTANT: Without $select, adhoc fields are NOT returned by OData!
+ */
+const SCHEDULE_SHIFT_SELECT_FIELDS = [
+  // Core fields
+  "Id",
+  "Description",
+  "StartTime",
+  "FinishTime",
+  "Hours",
+  "Deleted",
+  "Updated",
+  "UpdatedBy",
+  "UserID",
+  "ActivityTypeID",
+  "JobRoleID",
+  "ScheduleID",
+  "DepartmentID",
+  // Adhoc fields - must be explicitly selected!
+  "adhoc_SyllabusPlus",
+  "adhoc_UnitCode",
+  "adhoc_ActivityGroup",
+  "adhoc_IsDeleted",
+  "adhoc_TeachingPeriod",
+  "adhoc_ActivityCode",
+].join(",");
+
+/**
  * Fetch schedule shifts using CoreAPI OData with server-side filtering
  * Much more efficient than fetching all and filtering client-side
  */
@@ -102,8 +130,8 @@ async function fetchScheduleShiftsFiltered(
   while (hasMore) {
     onProgress?.(`Fetching shifts: ${allRecords.length} loaded...`);
 
-    // Build URL with filter
-    let url = `${odataBase}/ScheduleShift?$top=${pageSize}&$skip=${offset}`;
+    // Build URL with $select (required for adhoc fields!) and filter
+    let url = `${odataBase}/ScheduleShift?$select=${SCHEDULE_SHIFT_SELECT_FIELDS}&$top=${pageSize}&$skip=${offset}`;
     if (filter) {
       url += `&$filter=${encodeURIComponent(filter)}`;
     }

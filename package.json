@@ -21,6 +21,8 @@
     "@mui/material": "^7.3.6",
     "@mui/x-data-grid": "^8.23.0",
     "@mui/x-date-pickers": "^8.23.0",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "dayjs": "^1.11.13",
     "exceljs": "^4.4.0",
