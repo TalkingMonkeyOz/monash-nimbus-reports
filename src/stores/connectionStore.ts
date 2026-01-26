@@ -90,7 +90,10 @@ export const useConnectionStore = create<ConnectionState>()(
 
       getActiveConnection: () => {
         const state = get();
-        return state.connections.find((c) => c.name === state.activeConnectionName) || null;
+        const conn = state.connections.find((c) => c.name === state.activeConnectionName);
+        if (!conn) return null;
+        // Default to apptoken for old connections without authMode
+        return { ...conn, authMode: conn.authMode || "apptoken" };
       },
 
       authenticate: async (connection, username, password) => {

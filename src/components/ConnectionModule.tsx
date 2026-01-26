@@ -40,7 +40,7 @@ import ErrorIcon from "@mui/icons-material/Error";
 
 import { ProfileManager } from "../core/profileManager";
 import { AuthService } from "../core/authService";
-import type { Profile, NimbusCredentials } from "../core/types";
+import type { Profile, NimbusCredentials, AuthMode } from "../core/types";
 
 interface ConnectionModuleProps {
   onConnected: (credentials: NimbusCredentials, profile: Profile) => void;
@@ -69,8 +69,14 @@ export default function ConnectionModule({
   const [formDisplayName, setFormDisplayName] = useState("");
   const [formEnvironment, setFormEnvironment] = useState<"UAT" | "Production">("UAT");
   const [formBaseUrl, setFormBaseUrl] = useState("");
+  const [formAuthMode, setFormAuthMode] = useState<AuthMode>("apptoken");
+  // Credential-based auth
   const [formUsername, setFormUsername] = useState("");
   const [formPassword, setFormPassword] = useState("");
+  // App Token auth
+  const [formAppToken, setFormAppToken] = useState("");
+  const [formAppUsername, setFormAppUsername] = useState("");
+  // Common
   const [formSaveCredentials, setFormSaveCredentials] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState<string | null>(null);
@@ -91,8 +97,11 @@ export default function ConnectionModule({
     setFormDisplayName("");
     setFormEnvironment("UAT");
     setFormBaseUrl("");
+    setFormAuthMode("apptoken");
     setFormUsername("");
     setFormPassword("");
+    setFormAppToken("");
+    setFormAppUsername("");
     setFormSaveCredentials(true);
     setFormError(null);
     setTestSuccess(null);
@@ -100,28 +109,38 @@ export default function ConnectionModule({
   };
 
   const handleEditProfile = async (profile: Profile) => {
+    const authMode = profile.authMode || "apptoken";
     setEditingProfile(profile);
     setLoginMode(false);
     setFormName(profile.name);
     setFormDisplayName(profile.displayName);
     setFormEnvironment(profile.environment);
     setFormBaseUrl(profile.baseUrl);
+    setFormAuthMode(authMode);
     setFormSaveCredentials(true);
     setFormError(null);
     setTestSuccess(null);
 
+    // Reset all credential fields
+    setFormUsername("");
+    setFormPassword("");
+    setFormAppToken("");
+    setFormAppUsername("");
+
     if (profile.hasStoredCredentials) {
-      const saved = await AuthService.loadLoginCredentials(profile.name);
-      if (saved) {
-        setFormUsername(saved.username);
-        setFormPassword(saved.password);
+      if (authMode === "apptoken") {
+        const saved = await AuthService.loadAppTokenCredentials(profile.name);
+        if (saved) {
+          setFormAppToken(saved.appToken);
+          setFormAppUsername(saved.username);
+        }
       } else {
-        setFormUsername("");
-        setFormPassword("");
+        const saved = await AuthService.loadLoginCredentials(profile.name);
+        if (saved) {
+          setFormUsername(saved.username);
+          setFormPassword(saved.password);
+        }
       }
-    } else {
-      setFormUsername("");
-      setFormPassword("");
     }
 
     setShowDialog(true);
@@ -144,24 +163,41 @@ export default function ConnectionModule({
     setFormError(null);
     setTestSuccess(null);
 
-    if (!formBaseUrl.trim() || !formUsername.trim() || !formPassword.trim()) {
-      setFormError("URL, username, and password are required to test");
-      return;
-    }
-
     if (!AuthService.validateUrl(formBaseUrl)) {
       setFormError("Invalid URL format. Must start with http:// or https://");
       return;
     }
 
+    if (formAuthMode === "apptoken") {
+      if (!formBaseUrl.trim() || !formAppToken.trim() || !formAppUsername.trim()) {
+        setFormError("URL, App Token, and Username are required to test");
+        return;
+      }
+    } else {
+      if (!formBaseUrl.trim() || !formUsername.trim() || !formPassword.trim()) {
+        setFormError("URL, username, and password are required to test");
+        return;
+      }
+    }
+
     setIsTesting(true);
     try {
-      const creds = await AuthService.authenticateWithNimbus(
-        formBaseUrl,
-        formUsername,
-        formPassword
-      );
-      setTestSuccess(`Connection successful! User ID: ${creds.userId}`);
+      let creds: NimbusCredentials;
+      if (formAuthMode === "apptoken") {
+        creds = await AuthService.authenticateWithAppToken(
+          formBaseUrl,
+          formAppToken,
+          formAppUsername
+        );
+        setTestSuccess(`Connection successful! User ID: ${creds.userId}`);
+      } else {
+        creds = await AuthService.authenticateWithNimbus(
+          formBaseUrl,
+          formUsername,
+          formPassword
+        );
+        setTestSuccess(`Connection successful! User ID: ${creds.userId}`);
+      }
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Connection failed");
     } finally {
@@ -189,10 +225,16 @@ export default function ConnectionModule({
 
     let hasCredentials = editingProfile?.hasStoredCredentials || false;
 
-    if (formUsername.trim() && formPassword.trim() && formSaveCredentials) {
+    // Save credentials based on auth mode
+    if (formSaveCredentials) {
       try {
-        await AuthService.saveLoginCredentials(formName, formUsername.trim(), formPassword);
-        hasCredentials = true;
+        if (formAuthMode === "apptoken" && formAppToken.trim() && formAppUsername.trim()) {
+          await AuthService.saveAppTokenCredentials(formName, formAppToken.trim(), formAppUsername.trim());
+          hasCredentials = true;
+        } else if (formAuthMode === "credential" && formUsername.trim() && formPassword.trim()) {
+          await AuthService.saveLoginCredentials(formName, formUsername.trim(), formPassword);
+          hasCredentials = true;
+        }
       } catch (error) {
         setFormError("Failed to save credentials");
         return;
@@ -205,6 +247,7 @@ export default function ConnectionModule({
       environment: formEnvironment,
       baseUrl: formBaseUrl.trim().replace(/\/$/, ""),
       hasStoredCredentials: hasCredentials,
+      authMode: formAuthMode,
     };
 
     ProfileManager.saveProfile(profile);
@@ -222,6 +265,7 @@ export default function ConnectionModule({
   };
 
   const handleConnect = async (profile: Profile) => {
+    const authMode = profile.authMode || "apptoken";
     setStatus("connecting");
     setErrorMessage(null);
 
@@ -238,19 +282,35 @@ export default function ConnectionModule({
         }
       }
 
-      // Try stored login credentials
-      const storedLogin = await AuthService.loadLoginCredentials(profile.name);
-      if (storedLogin) {
-        const newCreds = await AuthService.authenticateWithNimbus(
-          profile.baseUrl,
-          storedLogin.username,
-          storedLogin.password
-        );
-        await AuthService.saveCredentialsToKeyring(profile.name, newCreds);
-        ProfileManager.updateLastUsed(profile.name);
-        onConnected(newCreds, profile);
-        setStatus("idle");
-        return;
+      // Try stored credentials based on auth mode
+      if (authMode === "apptoken") {
+        const storedAppToken = await AuthService.loadAppTokenCredentials(profile.name);
+        if (storedAppToken) {
+          const newCreds = await AuthService.authenticateWithAppToken(
+            profile.baseUrl,
+            storedAppToken.appToken,
+            storedAppToken.username
+          );
+          await AuthService.saveCredentialsToKeyring(profile.name, newCreds);
+          ProfileManager.updateLastUsed(profile.name);
+          onConnected(newCreds, profile);
+          setStatus("idle");
+          return;
+        }
+      } else {
+        const storedLogin = await AuthService.loadLoginCredentials(profile.name);
+        if (storedLogin) {
+          const newCreds = await AuthService.authenticateWithNimbus(
+            profile.baseUrl,
+            storedLogin.username,
+            storedLogin.password
+          );
+          await AuthService.saveCredentialsToKeyring(profile.name, newCreds);
+          ProfileManager.updateLastUsed(profile.name);
+          onConnected(newCreds, profile);
+          setStatus("idle");
+          return;
+        }
       }
 
       // No stored credentials - open login dialog
@@ -260,8 +320,11 @@ export default function ConnectionModule({
       setFormDisplayName(profile.displayName);
       setFormEnvironment(profile.environment);
       setFormBaseUrl(profile.baseUrl);
+      setFormAuthMode(authMode);
       setFormUsername("");
       setFormPassword("");
+      setFormAppToken("");
+      setFormAppUsername("");
       setFormSaveCredentials(true);
       setFormError(null);
       setStatus("idle");
@@ -273,25 +336,48 @@ export default function ConnectionModule({
   };
 
   const handleLogin = async () => {
-    if (!formUsername.trim() || !formPassword.trim()) {
-      setFormError("Username and password required");
-      return;
+    if (formAuthMode === "apptoken") {
+      if (!formAppToken.trim() || !formAppUsername.trim()) {
+        setFormError("App Token and Username required");
+        return;
+      }
+    } else {
+      if (!formUsername.trim() || !formPassword.trim()) {
+        setFormError("Username and password required");
+        return;
+      }
     }
 
     setStatus("connecting");
     setFormError(null);
 
     try {
-      const creds = await AuthService.authenticateWithNimbus(
-        formBaseUrl,
-        formUsername,
-        formPassword
-      );
+      let creds: NimbusCredentials;
 
-      if (formSaveCredentials) {
-        await AuthService.saveLoginCredentials(formName, formUsername.trim(), formPassword);
-        await AuthService.saveCredentialsToKeyring(formName, creds);
-        ProfileManager.markCredentialsStored(formName, true);
+      if (formAuthMode === "apptoken") {
+        creds = await AuthService.authenticateWithAppToken(
+          formBaseUrl,
+          formAppToken,
+          formAppUsername
+        );
+
+        if (formSaveCredentials) {
+          await AuthService.saveAppTokenCredentials(formName, formAppToken.trim(), formAppUsername.trim());
+          await AuthService.saveCredentialsToKeyring(formName, creds);
+          ProfileManager.markCredentialsStored(formName, true);
+        }
+      } else {
+        creds = await AuthService.authenticateWithNimbus(
+          formBaseUrl,
+          formUsername,
+          formPassword
+        );
+
+        if (formSaveCredentials) {
+          await AuthService.saveLoginCredentials(formName, formUsername.trim(), formPassword);
+          await AuthService.saveCredentialsToKeyring(formName, creds);
+          ProfileManager.markCredentialsStored(formName, true);
+        }
       }
 
       const profile: Profile = {
@@ -300,6 +386,7 @@ export default function ConnectionModule({
         environment: formEnvironment,
         baseUrl: formBaseUrl.trim().replace(/\/$/, ""),
         hasStoredCredentials: formSaveCredentials,
+        authMode: formAuthMode,
       };
 
       ProfileManager.updateLastUsed(formName);
@@ -487,25 +574,59 @@ export default function ConnectionModule({
                 required
                 placeholder="https://nimbus.example.com"
               />
+              <FormControl fullWidth margin="normal">
+                <InputLabel>Authentication Method</InputLabel>
+                <Select
+                  value={formAuthMode}
+                  onChange={(e) => setFormAuthMode(e.target.value as AuthMode)}
+                  label="Authentication Method"
+                >
+                  <MenuItem value="apptoken">App Token (Recommended)</MenuItem>
+                  <MenuItem value="credential">Username / Password</MenuItem>
+                </Select>
+              </FormControl>
               <Divider sx={{ my: 2 }} />
             </>
           )}
 
-          <TextField
-            label="Username"
-            value={formUsername}
-            onChange={(e) => setFormUsername(e.target.value)}
-            fullWidth
-            margin="normal"
-          />
-          <TextField
-            label="Password"
-            type="password"
-            value={formPassword}
-            onChange={(e) => setFormPassword(e.target.value)}
-            fullWidth
-            margin="normal"
-          />
+          {formAuthMode === "apptoken" ? (
+            <>
+              <TextField
+                label="App Token"
+                value={formAppToken}
+                onChange={(e) => setFormAppToken(e.target.value)}
+                fullWidth
+                margin="normal"
+                placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+              />
+              <TextField
+                label="Username"
+                value={formAppUsername}
+                onChange={(e) => setFormAppUsername(e.target.value)}
+                fullWidth
+                margin="normal"
+                placeholder="email@monash.edu"
+              />
+            </>
+          ) : (
+            <>
+              <TextField
+                label="Username"
+                value={formUsername}
+                onChange={(e) => setFormUsername(e.target.value)}
+                fullWidth
+                margin="normal"
+              />
+              <TextField
+                label="Password"
+                type="password"
+                value={formPassword}
+                onChange={(e) => setFormPassword(e.target.value)}
+                fullWidth
+                margin="normal"
+              />
+            </>
+          )}
 
           <Stack direction="row" alignItems="center" spacing={2} sx={{ mt: 1 }}>
             <FormControlLabel
@@ -520,7 +641,13 @@ export default function ConnectionModule({
             <Button
               variant="outlined"
               onClick={handleTestConnection}
-              disabled={isTesting || !formBaseUrl || !formUsername || !formPassword}
+              disabled={
+                isTesting ||
+                !formBaseUrl ||
+                (formAuthMode === "apptoken"
+                  ? !formAppToken || !formAppUsername
+                  : !formUsername || !formPassword)
+              }
               size="small"
             >
               {isTesting ? "Testing..." : "Test Connection"}
@@ -538,7 +665,8 @@ export default function ConnectionModule({
               <Button onClick={handleSaveProfile} variant="outlined">
                 Save Profile
               </Button>
-              {(formUsername && formPassword) && (
+              {((formAuthMode === "apptoken" && formAppToken && formAppUsername) ||
+                (formAuthMode === "credential" && formUsername && formPassword)) && (
                 <Button onClick={handleLogin} variant="contained">
                   Save & Connect
                 </Button>

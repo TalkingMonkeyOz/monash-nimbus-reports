@@ -9,6 +9,7 @@ export interface Profile {
   baseUrl: string;
   hasStoredCredentials: boolean;
   lastUsed?: Date;
+  authMode?: AuthMode; // Default to 'apptoken' if not set
 }
 
 export type AuthMode = "credential" | "apptoken";
