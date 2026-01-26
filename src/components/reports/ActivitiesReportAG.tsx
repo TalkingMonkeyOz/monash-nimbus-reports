@@ -11,10 +11,13 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Paper, Typography, Alert, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Box, ToggleButton, ToggleButtonGroup } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
-import { ColDef, GridReadyEvent } from "ag-grid-community";
+import { ColDef, GridReadyEvent, ModuleRegistry, AllCommunityModule } from "ag-grid-community";
 import { GridColDef } from "@mui/x-data-grid";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-material.css";
+
+// Register AG Grid modules (required for v31+)
+ModuleRegistry.registerModules([AllCommunityModule]);
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -341,9 +344,8 @@ export default function ActivitiesReportAG() {
       <div
         className="ag-theme-material"
         style={{
-          flex: 1,
+          height: 500,
           width: "100%",
-          minHeight: 400,
         }}
       >
         <AgGridReact<ActivityChange>
@@ -358,7 +360,6 @@ export default function ActivitiesReportAG() {
           suppressAggFuncInHeader={true}
           rowSelection="multiple"
           groupDefaultExpanded={1}
-          domLayout="autoHeight"
           overlayNoRowsTemplate="<span style='padding: 10px;'>Click Search to load shifts</span>"
         />
       </div>
