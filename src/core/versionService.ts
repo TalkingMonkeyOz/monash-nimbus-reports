@@ -1,41 +1,53 @@
 /**
  * Version checking service for update notifications
+ * Uses GitHub Releases API via Tauri backend
  */
 
-export const APP_VERSION = "0.1.0";
+import { invoke } from "@tauri-apps/api/core";
 
-export interface VersionInfo {
-  version: string;
-  releaseDate: string;
-  downloadUrl: string;
-  releaseNotes: string;
+// GitHub repo details
+const GITHUB_OWNER = "TalkingMonkeyOz";
+const GITHUB_REPO = "monash-nimbus-reports";
+
+export interface VersionCheckResult {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  release_url: string | null;
+  release_notes: string | null;
 }
 
 /**
- * Check for updates from a version manifest URL
- * For production, this would point to a GitHub release or hosted file
+ * Get current app version from Rust backend
+ */
+export async function getAppVersion(): Promise<string> {
+  try {
+    return await invoke<string>("get_current_version");
+  } catch {
+    return "0.1.0"; // Fallback
+  }
+}
+
+/**
+ * Check for updates from GitHub Releases
+ * @param githubToken Optional token for private repos
  */
 export async function checkForUpdates(
-  manifestUrl?: string
-): Promise<{ hasUpdate: boolean; latestVersion?: VersionInfo }> {
-  // Default manifest URL - can be configured
-  const url = manifestUrl || "https://raw.githubusercontent.com/monash/nimbus-reports/main/version.json";
-
+  githubToken?: string
+): Promise<{ hasUpdate: boolean; latestVersion?: string; releaseUrl?: string; releaseNotes?: string }> {
   try {
-    const response = await fetch(url, {
-      cache: "no-store",
-      headers: { "Accept": "application/json" }
+    const result = await invoke<VersionCheckResult>("check_for_updates", {
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
+      githubToken: githubToken || null,
     });
 
-    if (!response.ok) {
-      console.log("Version check: No manifest available");
-      return { hasUpdate: false };
-    }
-
-    const latest: VersionInfo = await response.json();
-    const hasUpdate = compareVersions(latest.version, APP_VERSION) > 0;
-
-    return { hasUpdate, latestVersion: hasUpdate ? latest : undefined };
+    return {
+      hasUpdate: result.update_available,
+      latestVersion: result.latest_version || undefined,
+      releaseUrl: result.release_url || undefined,
+      releaseNotes: result.release_notes || undefined,
+    };
   } catch (error) {
     console.log("Version check failed:", error);
     return { hasUpdate: false };
@@ -43,25 +55,14 @@ export async function checkForUpdates(
 }
 
 /**
- * Compare semantic versions
- * Returns: 1 if a > b, -1 if a < b, 0 if equal
+ * Open the release URL in the default browser
  */
-function compareVersions(a: string, b: string): number {
-  const partsA = a.split(".").map(Number);
-  const partsB = b.split(".").map(Number);
-
-  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-    const numA = partsA[i] || 0;
-    const numB = partsB[i] || 0;
-    if (numA > numB) return 1;
-    if (numA < numB) return -1;
+export async function openReleaseUrl(url: string): Promise<void> {
+  try {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+  } catch (error) {
+    // Fallback: try window.open
+    window.open(url, "_blank");
   }
-  return 0;
-}
-
-/**
- * Get current app version info
- */
-export function getAppVersion(): string {
-  return APP_VERSION;
 }

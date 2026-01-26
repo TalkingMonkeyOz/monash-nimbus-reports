@@ -84,11 +84,13 @@ Core fields returned directly:
 /CoreApi/OData/ScheduleShift?$select=Id,Description,adhoc_SyllabusPlus,adhoc_UnitCode
 ```
 
-### ScheduleShift Adhoc Fields (verified 2026-01-22)
+### ScheduleShift Adhoc Fields (verified via SQL 2026-01-26)
 
-| Field | Description | Notes |
-|-------|-------------|-------|
-| `adhoc_SyllabusPlus` | **SyllabusPlus activity code** | KEY FIELD for reports |
+**Total: 24 adhoc columns verified** via direct SQL query to `test-Nimbus_Monash`
+
+| Field | Description | Sample Values |
+|-------|-------------|---------------|
+| `adhoc_SyllabusPlus` | **SyllabusPlus activity code** | `#SPLUS33DDFC-2026`, `#SPLUSB46664-2026` |
 | `adhoc_UnitCode` | Unit/course code | |
 | `adhoc_TeachingPeriod` | Teaching period | e.g., "S2", "T3-58" |
 | `adhoc_ActivityGroup` | Activity group | e.g., "Workshop", "Seminar" |
@@ -148,7 +150,7 @@ Core fields returned directly:
 
 ---
 
-**Version**: 8.0
+**Version**: 8.1
 **Created**: 2026-01-20
-**Updated**: 2026-01-22
+**Updated**: 2026-01-26
 **Location**: docs/ENTITY_MAPPING.md

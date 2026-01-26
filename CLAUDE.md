@@ -128,6 +128,24 @@ When planning or architecting, invoke these skills:
 
 ---
 
+## Configuration (Claude Family)
+
+This project is part of the **Claude Family** ecosystem with centralized configuration:
+
+| File | Source | Editable? |
+|------|--------|-----------|
+| `.claude/settings.local.json` | **Generated from database** | No - regenerates each session |
+| `CLAUDE.md` | Manually maintained | Yes - but coordinate changes |
+
+**Key points**:
+- Hook configurations, MCP servers, and skills are managed centrally in `claude.config_templates`
+- Changes to settings.local.json are temporary - they regenerate on next session
+- To request config changes, message `claude-family` project via orchestrator
+
+**For CLAUDE.md updates**: Message the claude-family project with requested changes. This ensures all projects stay coordinated.
+
+---
+
 ## Coding Standards
 
 - Use patterns from nimbus-mui (don't reinvent)
@@ -138,7 +156,7 @@ When planning or architecting, invoke these skills:
 
 ---
 
-**Version**: 1.0
+**Version**: 1.1
 **Created**: 2026-01-20
-**Updated**: 2026-01-20
+**Updated**: 2026-01-26
 **Location**: C:\Projects\monash-nimbus-reports\CLAUDE.md

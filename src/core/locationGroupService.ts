@@ -16,8 +16,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 interface Session {
   base_url: string;
-  user_id: number;
-  auth_token: string;
+  auth_mode: "credential" | "apptoken";
+  // Credential-based
+  user_id?: number;
+  auth_token?: string;
+  // App Token based
+  app_token?: string;
+  username?: string;
 }
 
 // ============================================================================
@@ -68,8 +73,12 @@ async function fetchOData<T>(session: Session, endpoint: string): Promise<T[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await invoke<any>("execute_rest_get", {
     url,
-    userId: session.user_id,
-    authToken: session.auth_token,
+    // Credential-based auth
+    userId: session.auth_mode === "credential" ? session.user_id : null,
+    authToken: session.auth_mode === "credential" ? session.auth_token : null,
+    // App Token auth
+    appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+    username: session.auth_mode === "apptoken" ? session.username : null,
   });
 
   if (response?.body) {

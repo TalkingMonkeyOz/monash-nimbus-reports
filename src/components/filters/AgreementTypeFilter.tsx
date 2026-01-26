@@ -227,7 +227,14 @@ export default function AgreementTypeFilter({
  * Helper hook to use agreement type filter with automatic loading
  */
 export function useAgreementTypeFilter(
-  session: { base_url: string; user_id: number; auth_token: string } | null,
+  session: {
+    base_url: string;
+    auth_mode: "credential" | "apptoken";
+    user_id?: number;
+    auth_token?: string;
+    app_token?: string;
+    username?: string;
+  } | null,
   onProgress?: (msg: string) => void
 ) {
   const [loaded, setLoaded] = useState(false);

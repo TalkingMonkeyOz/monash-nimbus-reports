@@ -2,7 +2,6 @@ use reqwest::{Client, ClientBuilder};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
-use urlencoding::encode;
 
 use crate::types::HttpResponse;
 
@@ -21,6 +20,8 @@ fn build_headers(
     custom_headers: Option<HashMap<String, String>>,
     user_id: Option<i32>,
     auth_token: Option<String>,
+    app_token: Option<String>,
+    username: Option<String>,
 ) -> Result<reqwest::header::HeaderMap, String> {
     let mut headers = reqwest::header::HeaderMap::new();
 
@@ -36,29 +37,47 @@ fn build_headers(
             .map_err(|e| format!("Invalid Content-Type header: {}", e))?,
     );
 
-    // Nimbus requires UserID header
-    if let Some(user_id) = user_id {
+    // App Token auth mode - uses AppToken + Username headers
+    if let Some(ref token) = app_token {
         headers.insert(
-            "UserID",
-            user_id.to_string().parse()
-                .map_err(|e| format!("Invalid UserID header: {}", e))?,
-        );
-    }
-
-    if let Some(ref token) = auth_token {
-        // Nimbus requires both Authorization Bearer AND AuthenticationToken headers
-        let auth_value = format!("Bearer {}", token);
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            auth_value.parse()
-                .map_err(|e| format!("Invalid authorization header: {}", e))?,
-        );
-
-        headers.insert(
-            "AuthenticationToken",
+            "AppToken",
             token.parse()
-                .map_err(|e| format!("Invalid AuthenticationToken header: {}", e))?,
+                .map_err(|e| format!("Invalid AppToken header: {}", e))?,
         );
+
+        if let Some(ref user) = username {
+            headers.insert(
+                "Username",
+                user.parse()
+                    .map_err(|e| format!("Invalid Username header: {}", e))?,
+            );
+        }
+    }
+    // Credential-based auth mode - uses UserID + AuthenticationToken headers
+    else {
+        if let Some(user_id) = user_id {
+            headers.insert(
+                "UserID",
+                user_id.to_string().parse()
+                    .map_err(|e| format!("Invalid UserID header: {}", e))?,
+            );
+        }
+
+        if let Some(ref token) = auth_token {
+            // Nimbus requires both Authorization Bearer AND AuthenticationToken headers
+            let auth_value = format!("Bearer {}", token);
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                auth_value.parse()
+                    .map_err(|e| format!("Invalid authorization header: {}", e))?,
+            );
+
+            headers.insert(
+                "AuthenticationToken",
+                token.parse()
+                    .map_err(|e| format!("Invalid AuthenticationToken header: {}", e))?,
+            );
+        }
     }
 
     if let Some(custom) = custom_headers {
@@ -110,6 +129,8 @@ pub async fn execute_odata_query(
     count: Option<bool>,
     user_id: Option<i32>,
     auth_token: Option<String>,
+    app_token: Option<String>,
+    username: Option<String>,
     timeout_seconds: Option<u64>,
 ) -> Result<Value, String> {
     let client = build_client(timeout_seconds)?;
@@ -171,7 +192,7 @@ pub async fn execute_odata_query(
         url = format!("{}?{}", url, query_params.join("&"));
     }
 
-    let headers = build_headers(None, user_id, auth_token)?;
+    let headers = build_headers(None, user_id, auth_token, app_token, username)?;
 
     // Log the URL for debugging
     println!("OData query URL: {}", url);
@@ -207,6 +228,8 @@ pub async fn execute_rest_get(
     headers: Option<HashMap<String, String>>,
     user_id: Option<i32>,
     auth_token: Option<String>,
+    app_token: Option<String>,
+    username: Option<String>,
     timeout_seconds: Option<u64>,
 ) -> Result<HttpResponse, String> {
     let client = build_client(timeout_seconds)?;
@@ -225,7 +248,7 @@ pub async fn execute_rest_get(
         return Err("No URL provided. Pass 'url' or 'baseUrl' (optionally with 'endpoint')".to_string());
     };
 
-    let req_headers = build_headers(headers, user_id, auth_token)?;
+    let req_headers = build_headers(headers, user_id, auth_token, app_token, username)?;
 
     let response = client
         .get(&full_url)
@@ -247,6 +270,8 @@ pub async fn execute_rest_post(
     headers: Option<HashMap<String, String>>,
     user_id: Option<i32>,
     auth_token: Option<String>,
+    app_token: Option<String>,
+    username: Option<String>,
     timeout_seconds: Option<u64>,
 ) -> Result<HttpResponse, String> {
     let client = build_client(timeout_seconds)?;
@@ -265,7 +290,7 @@ pub async fn execute_rest_post(
         return Err("No URL provided. Pass 'url' or 'baseUrl' (optionally with 'endpoint')".to_string());
     };
 
-    let req_headers = build_headers(headers, user_id, auth_token)?;
+    let req_headers = build_headers(headers, user_id, auth_token, app_token, username)?;
 
     let response = client
         .post(&full_url)

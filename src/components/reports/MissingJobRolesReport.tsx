@@ -101,8 +101,11 @@ export default function MissingJobRolesReport() {
     if (session) {
       const sessionData = {
         base_url: session.base_url,
+        auth_mode: session.auth_mode,
         user_id: session.user_id,
         auth_token: session.auth_token,
+        app_token: session.app_token,
+        username: session.username,
       };
 
       // Load both locations and location groups in parallel
@@ -129,8 +132,11 @@ export default function MissingJobRolesReport() {
     try {
       const sessionData = {
         base_url: session.base_url,
+        auth_mode: session.auth_mode,
         user_id: session.user_id,
         auth_token: session.auth_token,
+        app_token: session.app_token,
+        username: session.username,
       };
 
       // Fetch shifts missing job role - server-side filtered

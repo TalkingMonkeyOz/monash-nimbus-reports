@@ -16,8 +16,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Alert,
-  Snackbar,
   Divider,
   List,
   ListItem,
@@ -33,7 +31,8 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import WarningIcon from "@mui/icons-material/Warning";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import WorkOffIcon from "@mui/icons-material/WorkOff";
-import { APP_VERSION, checkForUpdates, VersionInfo } from "./core/versionService";
+import { getAppVersion } from "./core/versionService";
+import UpdateNotification from "./components/UpdateNotification";
 import ConnectionModule from "./components/ConnectionModule";
 import ReportPreferences from "./components/ReportPreferences";
 import DeletedAgreementsReport from "./components/reports/DeletedAgreementsReport";
@@ -66,17 +65,11 @@ function App() {
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const [credentials, setCredentials] = useState<NimbusCredentials | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [updateAvailable, setUpdateAvailable] = useState<VersionInfo | null>(null);
-  const [updateSnackbarOpen, setUpdateSnackbarOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("0.1.0");
 
-  // Check for updates on startup
+  // Get current version on startup
   useEffect(() => {
-    checkForUpdates().then(({ hasUpdate, latestVersion }) => {
-      if (hasUpdate && latestVersion) {
-        setUpdateAvailable(latestVersion);
-        setUpdateSnackbarOpen(true);
-      }
-    });
+    getAppVersion().then(setAppVersion);
   }, []);
 
   const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
@@ -94,8 +87,11 @@ function App() {
       isAuthenticated: true,
       session: {
         base_url: creds.baseUrl,
+        auth_mode: creds.authMode,
         user_id: creds.userId,
         auth_token: creds.authToken,
+        app_token: creds.appToken,
+        username: creds.username,
       },
     });
   };
@@ -153,12 +149,13 @@ function App() {
           </Tooltip>
 
           <Typography variant="caption" sx={{ ml: 2, opacity: 0.7 }}>
-            v{APP_VERSION}
+            v{appVersion}
           </Typography>
         </Toolbar>
       </AppBar>
 
       <Container maxWidth={false} sx={{ flex: 1, py: 1, px: 2, overflow: "auto" }}>
+        <UpdateNotification checkDelay={5000} />
         {showSettings ? (
           <Box>
             <Paper sx={{ mb: 2 }}>
@@ -376,7 +373,7 @@ function App() {
 
           <Typography variant="body2" color="text.secondary">
             <InfoIcon sx={{ fontSize: 16, verticalAlign: "middle", mr: 0.5 }} />
-            Version {APP_VERSION} • Built for Monash University
+            Version {appVersion} • Built for Monash University
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -384,32 +381,6 @@ function App() {
         </DialogActions>
       </Dialog>
 
-      {/* Update Available Snackbar */}
-      <Snackbar
-        open={updateSnackbarOpen}
-        autoHideDuration={10000}
-        onClose={() => setUpdateSnackbarOpen(false)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-      >
-        <Alert
-          onClose={() => setUpdateSnackbarOpen(false)}
-          severity="info"
-          variant="filled"
-        >
-          Update available: v{updateAvailable?.version}
-          {updateAvailable?.downloadUrl && (
-            <Button
-              color="inherit"
-              size="small"
-              href={updateAvailable.downloadUrl}
-              target="_blank"
-              sx={{ ml: 1 }}
-            >
-              Download
-            </Button>
-          )}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 }

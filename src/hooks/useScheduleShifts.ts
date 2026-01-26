@@ -14,8 +14,13 @@ import { Dayjs } from "dayjs";
 
 interface ScheduleShiftSession {
   base_url: string;
-  user_id: number;
-  auth_token: string;
+  auth_mode: "credential" | "apptoken";
+  // Credential-based
+  user_id?: number;
+  auth_token?: string;
+  // App Token based
+  app_token?: string;
+  username?: string;
 }
 
 export interface ScheduleShiftData {
@@ -139,8 +144,12 @@ async function fetchScheduleShiftsFiltered(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await invoke<any>("execute_rest_get", {
       url,
-      userId: session.user_id,
-      authToken: session.auth_token,
+      // Credential-based auth
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      // App Token auth
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
     });
 
     // Parse response body
@@ -315,8 +324,12 @@ export async function fetchDeletedScheduleShiftAgreements(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await invoke<any>("execute_rest_get", {
       url,
-      userId: session.user_id,
-      authToken: session.auth_token,
+      // Credential-based auth
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      // App Token auth
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -418,8 +431,12 @@ export async function fetchScheduleShiftHistory(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await invoke<any>("execute_rest_get", {
       url,
-      userId: session.user_id,
-      authToken: session.auth_token,
+      // Credential-based auth
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      // App Token auth
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
     });
 
     let pageRecords: ScheduleShiftHistoryData[] = [];

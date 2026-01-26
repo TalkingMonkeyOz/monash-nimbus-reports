@@ -1,6 +1,6 @@
 # Nimbus Tasks, User Tasks, and Attendance System
 
-This document explains the relationships between Tasks, Attendances, and Timesheets in the Nimbus system, with practical API navigation examples validated against test-monash.
+This document explains the relationships between Tasks, Attendances, and Timesheets in the Nimbus system, with practical API navigation examples.
 
 ---
 
@@ -384,20 +384,10 @@ for att in attendances:
 
 ---
 
-## Validated Test Case
-
-**Task 24** on test-monash.nimbus.cloud:
-
-| Query | Endpoint | Result |
-|-------|----------|--------|
-| Task details | `REST /RESTApi/Task/24` | TaskHours: 35, Description: "jdvNewTaskUNsched" |
-| Activity with TaskID | `REST /RESTApi/ScheduleShiftAttendanceActivity` | Activity 40, TaskID: 24 ✅ |
-| Activity (no TaskID) | `CoreAPI /CoreAPI/Odata/ScheduleShiftAttendanceActivity?$filter=Id eq 40` | Found but NO TaskID field |
-| Attendance | `CoreAPI /CoreAPI/Odata/ScheduleShiftAttendance?$filter=Id eq 39` | Kate Tran, 1 hour |
 
 ---
 
 **Version**: 1.3
 **Created**: 2026-01-22
 **Updated**: 2026-01-22
-**Validated**: Against test-monash.nimbus.cloud
+

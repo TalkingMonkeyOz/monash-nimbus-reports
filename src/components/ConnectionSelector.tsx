@@ -20,7 +20,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import LogoutIcon from "@mui/icons-material/Logout";
-import { useConnectionStore, Connection } from "../stores/connectionStore";
+import { useConnectionStore, Connection, AuthMode } from "../stores/connectionStore";
 
 interface ConnectionSelectorProps {
   onLoginRequired: () => void;
@@ -30,6 +30,7 @@ export default function ConnectionSelector({ onLoginRequired }: ConnectionSelect
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newConnection, setNewConnection] = useState<Partial<Connection>>({
     environment: "production",
+    authMode: "apptoken", // Default to App Token for new connections
   });
 
   const {
@@ -164,6 +165,22 @@ export default function ConnectionSelector({ onLoginRequired }: ConnectionSelect
                 <MenuItem value="production">Production</MenuItem>
                 <MenuItem value="uat">UAT</MenuItem>
                 <MenuItem value="test">Test</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Authentication</InputLabel>
+              <Select
+                value={newConnection.authMode || "apptoken"}
+                onChange={(e) =>
+                  setNewConnection({
+                    ...newConnection,
+                    authMode: e.target.value as AuthMode,
+                  })
+                }
+                label="Authentication"
+              >
+                <MenuItem value="apptoken">App Token (Recommended)</MenuItem>
+                <MenuItem value="credential">Username / Password</MenuItem>
               </Select>
             </FormControl>
           </Stack>

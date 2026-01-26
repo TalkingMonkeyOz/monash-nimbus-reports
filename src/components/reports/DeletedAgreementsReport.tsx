@@ -105,8 +105,11 @@ export default function DeletedAgreementsReport() {
     if (session && !hierarchyLoaded) {
       const sessionData = {
         base_url: session.base_url,
+        auth_mode: session.auth_mode,
         user_id: session.user_id,
         auth_token: session.auth_token,
+        app_token: session.app_token,
+        username: session.username,
       };
       loadLocationGroupHierarchy(sessionData, setStatus).then(() => {
         setHierarchyLoaded(true);
@@ -118,8 +121,11 @@ export default function DeletedAgreementsReport() {
     if (session && !agreementTypesLoaded) {
       const sessionData = {
         base_url: session.base_url,
+        auth_mode: session.auth_mode,
         user_id: session.user_id,
         auth_token: session.auth_token,
+        app_token: session.app_token,
+        username: session.username,
       };
       loadAgreementTypes(sessionData).then(() => {
         setAgreementTypesLoaded(true);
@@ -192,8 +198,11 @@ export default function DeletedAgreementsReport() {
     try {
       const sessionData = {
         base_url: session.base_url,
+        auth_mode: session.auth_mode,
         user_id: session.user_id,
         auth_token: session.auth_token,
+        app_token: session.app_token,
+        username: session.username,
       };
 
       // Fetch DELETED ScheduleShiftAgreement records (agreements removed from shifts)

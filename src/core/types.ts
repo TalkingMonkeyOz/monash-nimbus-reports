@@ -11,16 +11,30 @@ export interface Profile {
   lastUsed?: Date;
 }
 
+export type AuthMode = "credential" | "apptoken";
+
 export interface NimbusCredentials {
   baseUrl: string;
-  userId: number;
-  authToken: string;
+  authMode: AuthMode;
+  // Credential-based auth
+  userId?: number;
+  authToken?: string;
+  // App Token auth
+  appToken?: string;
+  username?: string;
 }
 
 export interface NimbusAuthResponse {
   UserID: number;
   AuthenticationToken: string;
   Authenticated?: boolean;
+}
+
+export interface NimbusAppTokenAuthResponse {
+  UserID: number;
+  Authenticated: boolean;
+  AuthenticationToken?: string;
+  Brand?: string;
 }
 
 export interface HttpResponse {
