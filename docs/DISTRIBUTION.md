@@ -1,6 +1,50 @@
 # Distribution Guide
 
-Private GitHub releases with download tracking.
+Private GitHub releases with cross-platform builds (Windows + macOS).
+
+---
+
+## Supported Platforms
+
+| Platform | File | Notes |
+|----------|------|-------|
+| Windows (portable) | `_Windows_x64.exe` | Runs from anywhere, no install |
+| Windows (installer) | `_x64-setup.exe` | NSIS installer |
+| Windows (enterprise) | `_x64_en-US.msi` | MSI for GPO/SCCM |
+| macOS Apple Silicon | `_macOS_AppleSilicon.dmg` | M1/M2/M3 Macs |
+| macOS Intel | `_macOS_Intel.dmg` | Older Intel Macs |
+
+---
+
+## Automated Cross-Platform Builds
+
+GitHub Actions automatically builds all platforms when you push a version tag.
+
+### Trigger a Build
+
+```bash
+# 1. Update version in package.json, Cargo.toml, tauri.conf.json
+# 2. Commit and push
+git add .
+git commit -m "chore: Bump version to X.Y.Z"
+git push origin master
+
+# 3. Tag and push (triggers build)
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+### Build Output
+
+After ~10 minutes, check **Actions** tab → **Releases** (draft).
+
+Artifacts are also available under the workflow run.
+
+### Platform-Specific Configuration
+
+See `.github/workflows/build.yml` and `src-tauri/Cargo.toml` for:
+- Conditional keyring dependencies (Windows Credential Manager vs macOS Keychain)
+- Bundle targets for each OS
 
 ---
 
@@ -30,17 +74,29 @@ Private GitHub releases with download tracking.
 ## Release Workflow
 
 ```bash
-# 1. Update APP_VERSION in versionService.ts
-# 2. Update version.json
-# 3. Build
+# 1. Update version in all files
+#    - package.json
+#    - src-tauri/Cargo.toml
+#    - src-tauri/tauri.conf.json
+#    - versionService.ts (APP_VERSION)
+#    - version.json
+
+# 2. Commit and tag
+git add .
+git commit -m "chore: Release vX.Y.Z"
+git push origin master
+git tag vX.Y.Z
+git push origin vX.Y.Z
+
+# 3. Wait for GitHub Actions (~10 min)
+# 4. Review draft release, publish when ready
+```
+
+### Local Build (Windows only)
+
+```bash
 npm run tauri build
-
-# 4. Tag and push
-git commit -am "Release v0.2.0"
-git tag -a v0.2.0 -m "v0.2.0"
-git push origin master --tags
-
-# 5. Create GitHub release, upload exe
+# Output: src-tauri/target/release/bundle/
 ```
 
 ---
@@ -67,5 +123,6 @@ curl -H "Authorization: Bearer TOKEN" \
 
 ---
 
-**Version**: 1.0
+**Version**: 2.0
 **Created**: 2026-01-23
+**Updated**: 2026-01-27

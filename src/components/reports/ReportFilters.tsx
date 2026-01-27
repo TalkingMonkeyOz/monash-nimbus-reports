@@ -5,14 +5,15 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { Dayjs } from "dayjs";
 
 interface ReportFiltersProps {
-  fromDate: Dayjs | null;
-  toDate: Dayjs | null;
-  onFromDateChange: (date: Dayjs | null) => void;
-  onToDateChange: (date: Dayjs | null) => void;
+  fromDate?: Dayjs | null;
+  toDate?: Dayjs | null;
+  onFromDateChange?: (date: Dayjs | null) => void;
+  onToDateChange?: (date: Dayjs | null) => void;
   onSearch: () => void;
   onExport: () => void;
   loading?: boolean;
   children?: React.ReactNode;
+  hideDateFilters?: boolean;
 }
 
 export default function ReportFilters({
@@ -24,25 +25,30 @@ export default function ReportFilters({
   onExport,
   loading = false,
   children,
+  hideDateFilters = false,
 }: ReportFiltersProps) {
   // Use dates directly - parent must provide valid Dayjs objects
   return (
     <Box sx={{ mb: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
-        <DatePicker
-          label="From Date"
-          value={fromDate}
-          onChange={onFromDateChange}
-          format="DD/MM/YYYY"
-          slotProps={{ textField: { size: "small" } }}
-        />
-        <DatePicker
-          label="To Date"
-          value={toDate}
-          onChange={onToDateChange}
-          format="DD/MM/YYYY"
-          slotProps={{ textField: { size: "small" } }}
-        />
+        {!hideDateFilters && onFromDateChange && (
+          <DatePicker
+            label="From Date"
+            value={fromDate}
+            onChange={onFromDateChange}
+            format="DD/MM/YYYY"
+            slotProps={{ textField: { size: "small" } }}
+          />
+        )}
+        {!hideDateFilters && onToDateChange && (
+          <DatePicker
+            label="To Date"
+            value={toDate}
+            onChange={onToDateChange}
+            format="DD/MM/YYYY"
+            slotProps={{ textField: { size: "small" } }}
+          />
+        )}
 
         {children}
 

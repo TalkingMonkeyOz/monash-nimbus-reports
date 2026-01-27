@@ -31,6 +31,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import WarningIcon from "@mui/icons-material/Warning";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import WorkOffIcon from "@mui/icons-material/WorkOff";
+import SecurityIcon from "@mui/icons-material/Security";
 import { getAppVersion } from "./core/versionService";
 import UpdateNotification from "./components/UpdateNotification";
 import ConnectionModule from "./components/ConnectionModule";
@@ -40,6 +41,7 @@ import ActivitiesReport from "./components/reports/ActivitiesReport";
 import MissingActivitiesReport from "./components/reports/MissingActivitiesReport";
 import MissingJobRolesReport from "./components/reports/MissingJobRolesReport";
 import ChangeHistoryReport from "./components/reports/ChangeHistoryReport";
+import UserSecurityRolesReport from "./components/reports/UserSecurityRolesReport";
 import type { Profile, NimbusCredentials } from "./core/types";
 import { useConnectionStore } from "./stores/connectionStore";
 
@@ -212,6 +214,7 @@ function App() {
                 <Tab label="Missing Activities" />
                 <Tab label="Missing Job Roles" />
                 <Tab label="Change History" />
+                <Tab label="User Security Roles" />
               </Tabs>
             </Paper>
 
@@ -230,6 +233,9 @@ function App() {
               </TabPanel>
               <TabPanel value={tabValue} index={4}>
                 <ChangeHistoryReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={5}>
+                <UserSecurityRolesReport />
               </TabPanel>
             </Box>
           </Box>
@@ -339,6 +345,27 @@ function App() {
                     <strong>Criteria:</strong> All change records within the date range (based on change date, not shift date).
                     <br />
                     <strong>Use case:</strong> Investigate why an allocation was changed, who made the change, and when.
+                  </>
+                }
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            <ListItem>
+              <ListItemIcon>
+                <SecurityIcon color="success" />
+              </ListItemIcon>
+              <ListItemText
+                primary="User Security Roles Report"
+                secondary={
+                  <>
+                    <strong>Problem it solves:</strong> "What security roles does each user have, and what is their location scope?" - Reviews user permissions and job role assignments.
+                    <br />
+                    <strong>Criteria:</strong> All active users with their security role and job role assignments.
+                    <br />
+                    <strong>Options:</strong> Filter by active users only, rosterable users only.
+                    <br />
+                    <strong>Key fields:</strong> Security Role, Location scope, Location Group scope, Job Role.
                   </>
                 }
               />
