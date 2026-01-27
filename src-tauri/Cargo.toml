@@ -1,6 +1,6 @@
 [package]
 name = "monash-nimbus-reports"
-version = "0.2.1"
+version = "0.2.2"
 description = "Monash University Nimbus Reporting Tool"
 authors = ["John D"]
 edition = "2021"
