@@ -5,6 +5,7 @@ import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import { dataGridStyles } from "./dataGridStyles";
 import CascadingLocationFilter from "../filters/CascadingLocationFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
@@ -16,8 +17,7 @@ import {
   getUsername,
   getDepartment,
   getScheduleDateRange,
-  getLocationViaSchedule,
-  getLocationIdViaSchedule,
+  getLocation,
 } from "../../core/lookupService";
 import {
   loadLocationGroupHierarchy,
@@ -50,7 +50,7 @@ const baseColumns: GridColDef<MissingActivity>[] = [
   { field: "unitCode", headerName: "Unit Code", width: 100 },
   { field: "location", headerName: "Location", width: 140 },
   { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
+  { field: "scheduleId", headerName: "Schedule ID", width: 90 },
   { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
   { field: "activityStatus", headerName: "Activity Status", width: 130 },
 ];
@@ -145,58 +145,60 @@ export default function MissingActivitiesReport() {
         username: session.username,
       };
 
-      // Fetch shifts with user but missing activity - server-side filtered
+      // Build locationIds array for server-side filtering
+      let locationIds: number[] | undefined;
+      if (selectedLocationId) {
+        // Single location selected
+        locationIds = [selectedLocationId];
+      } else if (selectedGroupId) {
+        // Location group selected - get all location IDs in the group
+        const groupLocationIds = resolveLocationsForGroup(selectedGroupId);
+        locationIds = Array.from(groupLocationIds);
+      }
+
+      // Fetch shifts missing activity - server-side filtered including location
+      // Uses $expand=Schedule to get LocationID inline
       const missingActivityShifts = await fetchShiftsMissingActivity({
         session: sessionData,
         fromDate,
         toDate,
+        locationIds,
         onProgress: setStatus,
       });
 
       console.log(`Server returned ${missingActivityShifts.length} shifts with missing activities`);
 
-      // Collect unique schedule IDs for batch lookup
+      // Collect unique schedule IDs for batch lookup (for schedule date range)
       const scheduleIds = [...new Set(missingActivityShifts.map(s => s.ScheduleID).filter((id): id is number => id != null && id > 0))];
 
       // Load lookup data (users, locations, departments, schedules)
       await loadAllLookups(sessionData, scheduleIds, setStatus);
 
-      // Transform to report format with lookups
-      const transformed: MissingActivity[] = missingActivityShifts.map((item, index) => ({
-        id: item.Id || index,
-        shiftDescription: item.Description || "",
-        shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
-        shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
-        shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
-        location: getLocationViaSchedule(item.ScheduleID),
-        locationId: getLocationIdViaSchedule(item.ScheduleID),
-        department: getDepartment(item.DepartmentID),
-        scheduleId: item.ScheduleID || null,
-        scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        assignedPerson: getUsername(item.UserID),
-        unitCode: item.adhoc_UnitCode || "",
-        activityStatus: "Missing",
-      }));
+      // Transform to report format - use embedded Schedule for location info
+      const transformed: MissingActivity[] = missingActivityShifts.map((item, index) => {
+        const locationId = item.Schedule?.LocationID ?? null;
+        return {
+          id: item.Id || index,
+          shiftDescription: item.Description || "",
+          shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
+          shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
+          shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
+          location: locationId ? getLocation(locationId) : "",
+          locationId,
+          department: getDepartment(item.DepartmentID),
+          scheduleId: item.ScheduleID || null,
+          scheduleDateRange: getScheduleDateRange(item.ScheduleID),
+          assignedPerson: getUsername(item.UserID),
+          unitCode: item.adhoc_UnitCode || "",
+          activityStatus: "Missing",
+        };
+      });
 
-      // Filter by location group and/or specific location
-      let filtered = transformed;
+      // No client-side location filtering needed - done server-side via Schedule/LocationID in()
 
-      if (selectedGroupId) {
-        // Get all location IDs in the selected group (including nested groups)
-        const groupLocationIds = resolveLocationsForGroup(selectedGroupId);
-        filtered = filtered.filter(
-          (item) => item.locationId !== null && groupLocationIds.has(item.locationId)
-        );
-      }
-
-      if (selectedLocationId) {
-        // Further filter to specific location
-        filtered = filtered.filter((item) => item.locationId === selectedLocationId);
-      }
-
-      setData(filtered);
-      const filterDesc = selectedGroupId || selectedLocationId ? " (filtered)" : "";
-      setStatus(`Found ${filtered.length} shifts with missing activities${filterDesc}`);
+      setData(transformed);
+      const filterDesc = locationIds ? " (filtered by location)" : "";
+      setStatus(`Found ${transformed.length} shifts with missing activities${filterDesc}`);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -275,27 +277,10 @@ export default function MissingActivitiesReport() {
         loading={loading}
         pageSizeOptions={[25, 50, 100]}
         initialState={{
-          pagination: { paginationModel: { pageSize: 25 } },
+          pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
-        sx={{
-          flex: 1,
-          minHeight: 400,
-          "& .MuiDataGrid-virtualScroller": {
-            overflowX: "auto",
-          },
-          "& .MuiDataGrid-scrollbar--horizontal": {
-            display: "block",
-          },
-          // Pin first column (actions)
-          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
-            position: "sticky",
-            left: 0,
-            backgroundColor: "#fff",
-            zIndex: 1,
-            borderRight: "1px solid rgba(224, 224, 224, 1)",
-          },
-        }}
+        sx={dataGridStyles}
       />
     </Paper>
   );

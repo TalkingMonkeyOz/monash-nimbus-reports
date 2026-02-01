@@ -4,6 +4,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { loadLocationGroupHierarchy } from "./locationGroupService";
 
 interface Session {
   base_url: string;
@@ -353,7 +354,7 @@ export function getActivityType(activityTypeId: number | null | undefined): Acti
  * Get activity type description by ID
  */
 export function getActivityTypeDescription(activityTypeId: number | null | undefined): string {
-  if (!activityTypeId) return "";
+  if (!activityTypeId) return "(No Activity)";
   const at = activityTypeCache.get(activityTypeId);
   return at?.description || `Activity ${activityTypeId}`;
 }
@@ -441,7 +442,7 @@ export async function loadScheduleShifts(session: Session, shiftIds: number[]): 
   if (missingIds.length === 0) return;
 
   // Fetch in batches to avoid URL length limits
-  const batchSize = 50;
+  const batchSize = 20;
   for (let i = 0; i < missingIds.length; i += batchSize) {
     const batch = missingIds.slice(i, i + batchSize);
     const filter = batch.map(id => `Id eq ${id}`).join(" or ");
@@ -487,7 +488,7 @@ export async function loadAgreements(session: Session, agreementIds: number[]): 
   if (missingIds.length === 0) return;
 
   // Fetch in batches to avoid URL length limits
-  const batchSize = 50;
+  const batchSize = 20;
   for (let i = 0; i < missingIds.length; i += batchSize) {
     const batch = missingIds.slice(i, i + batchSize);
     const filter = batch.map(id => `Id eq ${id}`).join(" or ");
@@ -520,7 +521,7 @@ export async function loadSchedules(session: Session, scheduleIds: number[]): Pr
   if (missingIds.length === 0) return;
 
   // Fetch in batches to avoid URL length limits
-  const batchSize = 50;
+  const batchSize = 20;
   for (let i = 0; i < missingIds.length; i += batchSize) {
     const batch = missingIds.slice(i, i + batchSize);
     const filter = batch.map(id => `Id eq ${id}`).join(" or ");
@@ -736,4 +737,66 @@ export async function loadAllLookups(
   }
 
   onProgress?.("Lookups loaded");
+}
+
+// ============================================================================
+// Eager Cache Loading (on connection)
+// ============================================================================
+
+export interface CacheLoadingProgress {
+  step: number;
+  totalSteps: number;
+  currentTask: string;
+  detail?: string;
+}
+
+/**
+ * Preload all caches on connection
+ * This is called immediately after successful authentication
+ * Shows progress modal with each step
+ */
+export async function preloadAllCaches(
+  session: Session,
+  onProgress: (progress: CacheLoadingProgress) => void
+): Promise<void> {
+  const totalSteps = 6;
+
+  // Step 1: Load users (biggest dataset, ~21k)
+  onProgress({ step: 1, totalSteps, currentTask: "Loading users", detail: "~21,000 records" });
+  await loadUsers(session);
+  onProgress({ step: 1, totalSteps, currentTask: "Loading users", detail: `${userCache.size} loaded` });
+
+  // Step 2: Load locations
+  onProgress({ step: 2, totalSteps, currentTask: "Loading locations" });
+  await loadLocations(session);
+  onProgress({ step: 2, totalSteps, currentTask: "Loading locations", detail: `${locationCache.size} loaded` });
+
+  // Step 3: Load departments
+  onProgress({ step: 3, totalSteps, currentTask: "Loading departments" });
+  await loadDepartments(session);
+  onProgress({ step: 3, totalSteps, currentTask: "Loading departments", detail: `${departmentCache.size} loaded` });
+
+  // Step 4: Load activity types
+  onProgress({ step: 4, totalSteps, currentTask: "Loading activity types" });
+  await loadActivityTypes(session);
+  onProgress({ step: 4, totalSteps, currentTask: "Loading activity types", detail: `${activityTypeCache.size} loaded` });
+
+  // Step 5: Load agreement types (for filter dropdowns)
+  onProgress({ step: 5, totalSteps, currentTask: "Loading agreement types" });
+  await loadAgreementTypes(session);
+  onProgress({ step: 5, totalSteps, currentTask: "Loading agreement types", detail: `${agreementTypeCache.size} loaded` });
+
+  // Step 6: Load location group hierarchy
+  onProgress({ step: 6, totalSteps, currentTask: "Loading location groups" });
+  await loadLocationGroupHierarchy(session);
+  onProgress({ step: 6, totalSteps, currentTask: "Loading location groups", detail: "Hierarchy built" });
+
+  console.log("All caches preloaded successfully");
+}
+
+/**
+ * Check if caches are already loaded (for skipping preload on reconnect)
+ */
+export function areCachesLoaded(): boolean {
+  return userCache.size > 0 && locationCache.size > 0;
 }

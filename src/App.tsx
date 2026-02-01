@@ -32,9 +32,16 @@ import WarningIcon from "@mui/icons-material/Warning";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import WorkOffIcon from "@mui/icons-material/WorkOff";
 import SecurityIcon from "@mui/icons-material/Security";
+import AccessTimeIcon from "@mui/icons-material/AccessTime";
+import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
 import { getAppVersion } from "./core/versionService";
+import { preloadAllCaches, type CacheLoadingProgress } from "./core/lookupService";
+import { clearLocationGroupCache } from "./core/locationGroupService";
+import { clearCaches } from "./core/lookupService";
 import UpdateNotification from "./components/UpdateNotification";
 import ConnectionModule from "./components/ConnectionModule";
+import CacheLoadingModal from "./components/CacheLoadingModal";
 import ReportPreferences from "./components/ReportPreferences";
 import DeletedAgreementsReport from "./components/reports/DeletedAgreementsReport";
 import ActivitiesReport from "./components/reports/ActivitiesReport";
@@ -42,6 +49,9 @@ import MissingActivitiesReport from "./components/reports/MissingActivitiesRepor
 import MissingJobRolesReport from "./components/reports/MissingJobRolesReport";
 import ChangeHistoryReport from "./components/reports/ChangeHistoryReport";
 import UserSecurityRolesReport from "./components/reports/UserSecurityRolesReport";
+import EarlyApprovalReport from "./components/reports/EarlyApprovalReport";
+import UATExtractReport from "./components/reports/UATExtractReport";
+import CostCodeReport from "./components/reports/CostCodeReport";
 import type { Profile, NimbusCredentials } from "./core/types";
 import { useConnectionStore } from "./stores/connectionStore";
 
@@ -68,6 +78,8 @@ function App() {
   const [credentials, setCredentials] = useState<NimbusCredentials | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("0.1.0");
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheProgress, setCacheProgress] = useState<CacheLoadingProgress | null>(null);
 
   // Get current version on startup
   useEffect(() => {
@@ -78,24 +90,44 @@ function App() {
     setTabValue(newValue);
   };
 
-  const handleConnected = (creds: NimbusCredentials, profile: Profile) => {
+  const handleConnected = async (creds: NimbusCredentials, profile: Profile) => {
     setCredentials(creds);
     setCurrentProfile(profile);
     setIsConnected(true);
     setShowSettings(false); // Go to reports after connecting
 
     // Sync to store for reports to access
+    const session = {
+      base_url: creds.baseUrl,
+      auth_mode: creds.authMode,
+      user_id: creds.userId,
+      auth_token: creds.authToken,
+      app_token: creds.appToken,
+      username: creds.username,
+    };
+
     useConnectionStore.setState({
       isAuthenticated: true,
-      session: {
-        base_url: creds.baseUrl,
-        auth_mode: creds.authMode,
-        user_id: creds.userId,
-        auth_token: creds.authToken,
-        app_token: creds.appToken,
-        username: creds.username,
-      },
+      session,
     });
+
+    // Start cache loading with modal
+    setCacheLoading(true);
+    setCacheProgress(null);
+
+    try {
+      await preloadAllCaches(session, (progress) => {
+        setCacheProgress(progress);
+      });
+    } catch (error) {
+      console.error("Cache preload failed:", error);
+      // Don't block the user - they can still use the app with lazy loading
+    } finally {
+      // Brief delay to show completion state
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      setCacheLoading(false);
+      setCacheProgress(null);
+    }
   };
 
   const handleDisconnected = () => {
@@ -108,6 +140,10 @@ function App() {
       isAuthenticated: false,
       session: null,
     });
+
+    // Clear all caches when disconnecting
+    clearCaches();
+    clearLocationGroupCache();
   };
 
   return (
@@ -208,6 +244,9 @@ function App() {
                 onChange={handleTabChange}
                 indicatorColor="primary"
                 textColor="primary"
+                variant="scrollable"
+                scrollButtons="auto"
+                allowScrollButtonsMobile
               >
                 <Tab label="Deleted Agreements" />
                 <Tab label="Activities (TT Changes)" />
@@ -215,6 +254,9 @@ function App() {
                 <Tab label="Missing Job Roles" />
                 <Tab label="Change History" />
                 <Tab label="User Security Roles" />
+                <Tab label="Early Approvals" />
+                <Tab label="UAT Extract" />
+                <Tab label="Cost Codes" />
               </Tabs>
             </Paper>
 
@@ -237,10 +279,22 @@ function App() {
               <TabPanel value={tabValue} index={5}>
                 <UserSecurityRolesReport />
               </TabPanel>
+              <TabPanel value={tabValue} index={6}>
+                <EarlyApprovalReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={7}>
+                <UATExtractReport />
+              </TabPanel>
+              <TabPanel value={tabValue} index={8}>
+                <CostCodeReport />
+              </TabPanel>
             </Box>
           </Box>
         )}
       </Container>
+
+      {/* Cache Loading Modal */}
+      <CacheLoadingModal open={cacheLoading} progress={cacheProgress} />
 
       {/* Help Dialog */}
       <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="md" fullWidth>
@@ -366,6 +420,72 @@ function App() {
                     <strong>Options:</strong> Filter by active users only, rosterable users only.
                     <br />
                     <strong>Key fields:</strong> Security Role, Location scope, Location Group scope, Job Role.
+                  </>
+                }
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            <ListItem>
+              <ListItemIcon>
+                <AccessTimeIcon color="warning" />
+              </ListItemIcon>
+              <ListItemText
+                primary="Early Approval Report"
+                secondary={
+                  <>
+                    <strong>Problem it solves:</strong> "Who approved this timesheet before the shift even happened?" - Detects potential policy violations where approvals are given ahead of time.
+                    <br />
+                    <strong>Criteria:</strong> Approved attendance records where approval timestamp is before shift start time.
+                    <br />
+                    <strong>Hours Early:</strong> Shows how many hours before the shift the approval occurred.
+                    <br />
+                    <strong>Warning:</strong> Approvals more than 24 hours early are flagged with a warning icon.
+                  </>
+                }
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            <ListItem>
+              <ListItemIcon>
+                <CloudDownloadIcon color="primary" />
+              </ListItemIcon>
+              <ListItemText
+                primary="UAT Extract Report"
+                secondary={
+                  <>
+                    <strong>Problem it solves:</strong> "I need comprehensive user data for UAT testing" - Exports all user-related data across 12 categories.
+                    <br />
+                    <strong>Sheets included:</strong> Staff Profile, Location, Hours, Employment Type, Roles, Pay, Variations, Agreements, Skills, Cycles, Cycle Details, Security.
+                    <br />
+                    <strong>Security:</strong> Access may be restricted to specific security roles.
+                    <br />
+                    <strong>Note:</strong> Contains sensitive data - handle appropriately.
+                  </>
+                }
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            <ListItem>
+              <ListItemIcon>
+                <AccountBalanceIcon color="info" />
+              </ListItemIcon>
+              <ListItemText
+                primary="Cost Code Validation Report"
+                secondary={
+                  <>
+                    <strong>Problem it solves:</strong> "Which cost codes are invalid for payroll extraction?" - Validates cost codes against SAP requirements.
+                    <br />
+                    <strong>Validation checks:</strong>
+                    <br />• "/" delimiter present (required for SAP payroll)
+                    <br />• Within validity dates (adhoc_From/adhoc_To)
+                    <br />• Active status
+                    <br />
+                    <strong>Options:</strong> Filter to show only invalid codes for quick review.
+                    <br />
+                    <strong>Key fields:</strong> Code, Description, Valid From/To, Status.
                   </>
                 }
               />

@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Paper, Typography, Alert, Chip, IconButton, Tooltip, Box } from "@mui/material";
+import { Paper, Typography, Alert, Chip, IconButton, Tooltip, Box, FormControlLabel, Switch } from "@mui/material";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import { dataGridStyles } from "./dataGridStyles";
 import CascadingLocationFilter from "../filters/CascadingLocationFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
@@ -20,7 +21,9 @@ import {
   getLocationIdViaSchedule,
   getActivityTypeDescription,
   isActivityTypeTT,
+  getUserDisplayName,
 } from "../../core/lookupService";
+import { fetchShiftHistory, analyzeActivityChange } from "../../core/historyService";
 import {
   loadLocationGroupHierarchy,
   resolveLocationsForGroup,
@@ -43,6 +46,10 @@ interface ActivityChange {
   isTTActivity: boolean;
   unitCode: string;
   flagged: boolean;
+  // Change tracking
+  changedBy: string;
+  changedDate: string;
+  previousActivity: string;
 }
 
 // Base columns for export (no action buttons or renderCell) - date first for easier scanning
@@ -52,15 +59,18 @@ const baseColumns: GridColDef<ActivityChange>[] = [
   { field: "shiftTo", headerName: "To", width: 80 },
   { field: "shiftDescription", headerName: "Shift Description", flex: 1, minWidth: 150 },
   { field: "assignedUser", headerName: "Assigned To", width: 180 },
-  { field: "activityDescription", headerName: "Activity", flex: 1, minWidth: 120 },
-  { field: "syllabusPlus", headerName: "Syllabus Plus", width: 150 },
+  { field: "activityDescription", headerName: "Current Activity", width: 130 },
+  { field: "previousActivity", headerName: "Previous Activity", width: 130 },
+  { field: "changedBy", headerName: "Changed By", width: 180 },
+  { field: "changedDate", headerName: "Changed Date", width: 140 },
+  { field: "syllabusPlus", headerName: "Syllabus Plus", width: 140 },
   { field: "unitCode", headerName: "Unit Code", width: 100 },
   { field: "location", headerName: "Location", width: 140 },
   { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
-  { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
-  { field: "isTTActivity", headerName: "TT Activity", width: 100 },
-  { field: "flagged", headerName: "Flagged", width: 100 },
+  { field: "scheduleId", headerName: "Schedule ID", width: 90 },
+  { field: "scheduleDateRange", headerName: "Schedule Period", width: 140 },
+  { field: "isTTActivity", headerName: "TT Activity", width: 90 },
+  { field: "flagged", headerName: "Flagged", width: 80 },
 ];
 
 export default function ActivitiesReport() {
@@ -74,6 +84,8 @@ export default function ActivitiesReport() {
   const [selectedGroupId, setSelectedGroupId] = useState<number | "">("");
   const [selectedLocationId, setSelectedLocationId] = useState<number | "">("");
   const [dataVersion, setDataVersion] = useState(0);
+  // Status filter: true = show only flagged, false = show all
+  const [flaggedOnly, setFlaggedOnly] = useState(true);
 
   const { session } = useConnectionStore();
 
@@ -99,27 +111,30 @@ export default function ActivitiesReport() {
         ) : null
       ),
     },
-    ...baseColumns.slice(0, 12), // All columns before isTTActivity
+    {
+      field: "flagged",
+      headerName: "Status",
+      width: 80,
+      renderCell: (params: GridRenderCellParams<ActivityChange>) =>
+        params.value ? (
+          <Chip label="FLAG" color="error" size="small" />
+        ) : (
+          <Chip label="OK" color="success" size="small" variant="outlined" />
+        ),
+    },
+    ...baseColumns.slice(0, 15), // All columns up to isTTActivity
     {
       field: "isTTActivity",
       headerName: "TT Activity",
-      width: 100,
+      width: 90,
       renderCell: (params: GridRenderCellParams<ActivityChange>) => (
         <Chip
           label={params.value ? "Yes" : "No"}
           color={params.value ? "success" : "warning"}
           size="small"
+          variant="outlined"
         />
       ),
-    },
-    {
-      field: "flagged",
-      headerName: "Flagged",
-      width: 100,
-      renderCell: (params: GridRenderCellParams<ActivityChange>) =>
-        params.value ? (
-          <Chip label="FLAG" color="error" size="small" />
-        ) : null,
     },
   ], [session]);
 
@@ -166,7 +181,9 @@ export default function ActivitiesReport() {
         username: session.username,
       };
 
-      // Fetch active shifts with activities - server-side filtered
+      // Fetch timetabled shifts (have SyllabusPlus) - server-side filtered
+      // NOTE: Location filtering is CLIENT-SIDE because Nimbus OData has broken
+      // Schedule navigation - Schedule/LocationID filter returns 0 results
       const activeShifts = await fetchActiveShiftsWithActivities({
         session: sessionData,
         fromDate,
@@ -174,24 +191,33 @@ export default function ActivitiesReport() {
         onProgress: setStatus,
       });
 
-      console.log(`Server returned ${activeShifts.length} active shifts with activities`);
+      console.log(`Server returned ${activeShifts.length} timetabled shifts`);
 
-      // Collect unique schedule IDs for batch lookup
+      // Collect unique IDs for batch lookups
       const scheduleIds = [...new Set(activeShifts.map(s => s.ScheduleID).filter((id): id is number => id != null && id > 0))];
+      const shiftIds = [...new Set(activeShifts.map(s => s.Id).filter((id): id is number => id != null && id > 0))];
 
       // Load lookup data (users, locations, departments, schedules)
+      // This loads Schedule records separately - required for client-side location filtering
       await loadAllLookups(sessionData, scheduleIds, setStatus);
 
+      // Fetch history from ScheduleShiftHistory (correct entity for activity changes)
+      const shiftHistoryMap = await fetchShiftHistory(sessionData, shiftIds, setStatus);
+
       // Transform and flag non-TT activities
-      // Business rule: Flag shifts that have SyllabusPlus (from timetable) but use non-TT activity
+      // Business rule: Flag shifts that have SyllabusPlus (from timetable) but use non-TT activity or no activity
       const transformed: ActivityChange[] = activeShifts.map((item, index) => {
         const syllabusPlus = item.adhoc_SyllabusPlus || "";
         const activityDescription = getActivityTypeDescription(item.ActivityTypeID);
         const isTT = isActivityTypeTT(item.ActivityTypeID);
 
         // Flag: Has SyllabusPlus (timetabled shift) BUT activity is NOT a TT: prefixed activity
-        // This indicates someone may have changed a timetabled activity to a non-TT activity
+        // This indicates someone may have changed/removed a timetabled activity
         const shouldFlag = !!syllabusPlus && !isTT;
+
+        // Get change history for this shift (from ScheduleShiftHistory - correct entity)
+        const historyRecords = shiftHistoryMap.get(item.Id);
+        const changeInfo = analyzeActivityChange(historyRecords, item.ActivityTypeID ?? null);
 
         return {
           id: item.Id || index,
@@ -210,13 +236,20 @@ export default function ActivitiesReport() {
           isTTActivity: isTT,
           unitCode: item.adhoc_UnitCode || "",
           flagged: shouldFlag,
+          // Change tracking - from ScheduleShiftHistory (correct entity)
+          changedBy: changeInfo.changedBy ? getUserDisplayName(changeInfo.changedBy) : "",
+          changedDate: changeInfo.changedDate ? dayjs(changeInfo.changedDate).format("DD/MM/YYYY HH:mm") : "",
+          previousActivity: changeInfo.previousActivityTypeId !== null
+            ? getActivityTypeDescription(changeInfo.previousActivityTypeId)
+            : "",
         };
       });
 
       // Sort flagged items first
       transformed.sort((a, b) => (b.flagged ? 1 : 0) - (a.flagged ? 1 : 0));
 
-      // Filter by location group and/or specific location
+      // CLIENT-SIDE location filtering (required due to Nimbus OData Schedule navigation bug)
+      // We load Schedules separately via loadAllLookups() which stores LocationID in cache
       let filtered = transformed;
 
       if (selectedGroupId) {
@@ -233,7 +266,7 @@ export default function ActivitiesReport() {
       }
 
       setData(filtered);
-      const filterDesc = selectedGroupId || selectedLocationId ? " (filtered)" : "";
+      const filterDesc = selectedGroupId || selectedLocationId ? " (filtered by location)" : "";
       setStatus(`Found ${filtered.length} shifts (${filtered.filter(t => t.flagged).length} flagged)${filterDesc}`);
     } catch (err) {
       console.error("Search failed:", err);
@@ -244,18 +277,27 @@ export default function ActivitiesReport() {
     }
   }, [session, fromDate, toDate, selectedGroupId, selectedLocationId]);
 
+  const flaggedCount = data.filter((d) => d.flagged).length;
+
+  // Apply flagged-only filter to displayed data
+  const displayedData = useMemo(() => {
+    if (flaggedOnly) {
+      return data.filter((d) => d.flagged);
+    }
+    return data;
+  }, [data, flaggedOnly]);
+
   const handleExport = useCallback(async () => {
-    if (data.length === 0) return;
+    if (displayedData.length === 0) return;
     setStatus("Exporting to Excel...");
-    const result = await exportToExcel(data, "Activities_Report", baseColumns);
+    const filename = flaggedOnly ? "Activities_Report_Flagged" : "Activities_Report";
+    const result = await exportToExcel(displayedData, filename, baseColumns);
     if (result.success) {
       setStatus(result.message);
     } else {
       setError(result.message);
     }
-  }, [data]);
-
-  const flaggedCount = data.filter((d) => d.flagged).length;
+  }, [displayedData, flaggedOnly]);
 
   return (
     <Paper sx={{ p: 1.5, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -301,6 +343,17 @@ export default function ActivitiesReport() {
           onLocationChange={setSelectedLocationId}
           dataVersion={dataVersion}
         />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={flaggedOnly}
+              onChange={(e) => setFlaggedOnly(e.target.checked)}
+              size="small"
+            />
+          }
+          label="Flagged only"
+          sx={{ ml: 1 }}
+        />
       </ReportFilters>
 
       {error && (
@@ -310,36 +363,16 @@ export default function ActivitiesReport() {
       )}
 
       <DataGrid
-        rows={data}
+        rows={displayedData}
         columns={columns}
         loading={loading}
         pageSizeOptions={[25, 50, 100]}
         initialState={{
-          pagination: { paginationModel: { pageSize: 25 } },
+          pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
         getRowClassName={(params) => (params.row.flagged ? "flagged-row" : "")}
-        sx={{
-          flex: 1,
-          minHeight: 400,
-          "& .flagged-row": {
-            backgroundColor: "rgba(211, 47, 47, 0.1)",
-          },
-          "& .MuiDataGrid-virtualScroller": {
-            overflowX: "auto",
-          },
-          "& .MuiDataGrid-scrollbar--horizontal": {
-            display: "block",
-          },
-          // Pin first column (actions)
-          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
-            position: "sticky",
-            left: 0,
-            backgroundColor: "#fff",
-            zIndex: 1,
-            borderRight: "1px solid rgba(224, 224, 224, 1)",
-          },
-        }}
+        sx={dataGridStyles}
       />
     </Paper>
   );

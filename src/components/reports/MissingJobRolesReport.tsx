@@ -5,6 +5,7 @@ import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import { dataGridStyles } from "./dataGridStyles";
 import CascadingLocationFilter from "../filters/CascadingLocationFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
@@ -50,7 +51,7 @@ const baseColumns: GridColDef<ShiftMissingJobRole>[] = [
   { field: "hours", headerName: "Hours", width: 80, type: "number" },
   { field: "location", headerName: "Location", width: 140 },
   { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
+  { field: "scheduleId", headerName: "Schedule ID", width: 90 },
   { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
   { field: "unitCode", headerName: "Unit Code", width: 100 },
   { field: "assignedUser", headerName: "Assigned To", width: 180 },
@@ -270,27 +271,10 @@ export default function MissingJobRolesReport() {
         loading={loading}
         pageSizeOptions={[25, 50, 100]}
         initialState={{
-          pagination: { paginationModel: { pageSize: 25 } },
+          pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
-        sx={{
-          flex: 1,
-          minHeight: 400,
-          "& .MuiDataGrid-virtualScroller": {
-            overflowX: "auto",
-          },
-          "& .MuiDataGrid-scrollbar--horizontal": {
-            display: "block",
-          },
-          // Pin first column (actions)
-          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
-            position: "sticky",
-            left: 0,
-            backgroundColor: "#fff",
-            zIndex: 1,
-            borderRight: "1px solid rgba(224, 224, 224, 1)",
-          },
-        }}
+        sx={dataGridStyles}
       />
     </Paper>
   );

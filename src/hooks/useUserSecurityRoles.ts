@@ -126,11 +126,7 @@ export async function fetchUsersWithSecurityRoles(
       offset += pageSize;
     }
 
-    // Safety limit - 5000 users
-    if (offset >= pageSize * 50) {
-      console.warn("Reached safety limit of 5000 users");
-      hasMore = false;
-    }
+    // No artificial limit - follow pagination to completion
   }
 
   onProgress?.(`Loaded ${allRecords.length} users with security roles`);

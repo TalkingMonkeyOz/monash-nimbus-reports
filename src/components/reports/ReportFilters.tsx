@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { Box, Button, Stack } from "@mui/material";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import SearchIcon from "@mui/icons-material/Search";
@@ -27,7 +28,30 @@ export default function ReportFilters({
   children,
   hideDateFilters = false,
 }: ReportFiltersProps) {
-  // Use dates directly - parent must provide valid Dayjs objects
+  const [dateError, setDateError] = useState<string | null>(null);
+
+  // Validate dates and call onSearch if valid
+  const handleSearch = useCallback(() => {
+    // Check if To date is before From date
+    if (fromDate && toDate && toDate.isBefore(fromDate, "day")) {
+      setDateError("To date cannot be before From date");
+      return;
+    }
+    setDateError(null);
+    onSearch();
+  }, [fromDate, toDate, onSearch]);
+
+  // Clear error when dates change
+  const handleFromDateChange = useCallback((date: Dayjs | null) => {
+    setDateError(null);
+    onFromDateChange?.(date);
+  }, [onFromDateChange]);
+
+  const handleToDateChange = useCallback((date: Dayjs | null) => {
+    setDateError(null);
+    onToDateChange?.(date);
+  }, [onToDateChange]);
+
   return (
     <Box sx={{ mb: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -35,7 +59,7 @@ export default function ReportFilters({
           <DatePicker
             label="From Date"
             value={fromDate}
-            onChange={onFromDateChange}
+            onChange={handleFromDateChange}
             format="DD/MM/YYYY"
             slotProps={{ textField: { size: "small" } }}
           />
@@ -44,9 +68,15 @@ export default function ReportFilters({
           <DatePicker
             label="To Date"
             value={toDate}
-            onChange={onToDateChange}
+            onChange={handleToDateChange}
             format="DD/MM/YYYY"
-            slotProps={{ textField: { size: "small" } }}
+            slotProps={{
+              textField: {
+                size: "small",
+                error: !!dateError,
+                helperText: dateError,
+              },
+            }}
           />
         )}
 
@@ -55,7 +85,7 @@ export default function ReportFilters({
         <Button
           variant="contained"
           startIcon={<SearchIcon />}
-          onClick={onSearch}
+          onClick={handleSearch}
           disabled={loading}
         >
           Search

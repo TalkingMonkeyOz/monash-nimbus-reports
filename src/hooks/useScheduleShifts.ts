@@ -171,11 +171,7 @@ async function fetchScheduleShiftsFiltered(
       offset += pageSize;
     }
 
-    // Safety limit - 10000 records (with server-side filter this should be rare)
-    if (offset >= pageSize * 20) {
-      console.warn("Reached safety limit of 10000 records");
-      hasMore = false;
-    }
+    // No artificial limit - follow pagination to completion
   }
 
   onProgress?.(`Loaded ${allRecords.length} shifts (server-side filtered)`);
@@ -217,29 +213,118 @@ export async function fetchDeletedShifts(
 }
 
 /**
- * Fetch active (non-deleted) shifts with activities - for Activities Report
- * Server-side filter: Deleted eq false and ActivityTypeID ne null
+ * Fetch timetabled shifts for TT Changes Report
+ * Server-side filter: Deleted eq false and adhoc_SyllabusPlus ne null
+ *
+ * NOTE: Location filtering is done CLIENT-SIDE because Nimbus OData has broken
+ * Schedule navigation - Schedule/LocationID filter returns 0 results.
+ * We load Schedules separately via loadSchedules() and filter client-side.
+ *
+ * Returns shifts that came from Syllabus Plus (timetabled).
+ * Client-side then flags shifts where ActivityType is NULL or non-TT.
  */
 export async function fetchActiveShiftsWithActivities(
   options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
 ): Promise<ScheduleShiftData[]> {
   return fetchShiftsInDateRange({
     ...options,
-    additionalFilter: "Deleted eq false and ActivityTypeID ne null",
+    // Only get timetabled shifts (have SyllabusPlus value)
+    // Don't filter by ActivityTypeID - we want to find NULL and non-TT activities
+    // NOTE: Location filtering is client-side due to Nimbus OData limitation
+    additionalFilter: "Deleted eq false and adhoc_SyllabusPlus ne null",
   });
 }
 
 /**
- * Fetch shifts with user but missing activity - for Missing Activities Report
- * Server-side filter: Deleted eq false and UserID ne null and ActivityTypeID eq null
+ * Extended shift data with embedded Schedule for location info
+ */
+export interface ScheduleShiftWithSchedule extends ScheduleShiftData {
+  Schedule?: {
+    Id: number;
+    LocationID?: number;
+    StartDate?: string;
+    EndDate?: string;
+  };
+}
+
+/**
+ * Fetch shifts missing activity - for Missing Activities Report
+ * OPTIMIZED: Uses $expand=Schedule to get LocationID inline for server-side filtering
+ * Server-side filter: Deleted eq false and ActivityTypeID eq null
+ * Optional: Schedule/LocationID in (ids) for location filtering
  */
 export async function fetchShiftsMissingActivity(
-  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
-): Promise<ScheduleShiftData[]> {
-  return fetchShiftsInDateRange({
-    ...options,
-    additionalFilter: "Deleted eq false and UserID ne null and ActivityTypeID eq null",
-  });
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter"> & {
+    locationIds?: number[];
+  }
+): Promise<ScheduleShiftWithSchedule[]> {
+  const { session, fromDate, toDate, locationIds, onProgress } = options;
+
+  const pageSize = 500;
+  let offset = 0;
+  let hasMore = true;
+  const allRecords: ScheduleShiftWithSchedule[] = [];
+
+  const odataBase = `${session.base_url.replace(/\/$/, "")}/CoreAPI/Odata`;
+
+  // Build filter: Shifts with no activity
+  const filters: string[] = ["Deleted eq false", "ActivityTypeID eq null"];
+  if (fromDate) {
+    filters.push(`StartTime ge ${fromDate.startOf("day").toISOString()}`);
+  }
+  if (toDate) {
+    filters.push(`StartTime lt ${toDate.endOf("day").toISOString()}`);
+  }
+  // Add location filter if specified
+  if (locationIds && locationIds.length > 0) {
+    filters.push(`Schedule/LocationID in (${locationIds.join(",")})`);
+  }
+  const filter = filters.join(" and ");
+
+  // Use $expand to get Schedule inline for LocationID
+  const expand = "Schedule($select=Id,LocationID,StartDate,EndDate)";
+
+  while (hasMore) {
+    onProgress?.(`Fetching shifts missing activity: ${allRecords.length} loaded...`);
+
+    let url = `${odataBase}/ScheduleShift?$select=${SCHEDULE_SHIFT_SELECT_FIELDS}&$top=${pageSize}&$skip=${offset}&$expand=${encodeURIComponent(expand)}`;
+    if (filter) {
+      url += `&$filter=${encodeURIComponent(filter)}`;
+    }
+
+    console.log(`[MissingActivities] Full URL: ${url}`);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await invoke<any>("execute_rest_get", {
+      url,
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
+    });
+
+    let pageRecords: ScheduleShiftWithSchedule[] = [];
+    if (response?.body) {
+      try {
+        const parsed = JSON.parse(response.body);
+        pageRecords = Array.isArray(parsed) ? parsed : parsed.value || [];
+      } catch {
+        console.error("Failed to parse OData response");
+      }
+    }
+
+    allRecords.push(...pageRecords);
+
+    if (pageRecords.length < pageSize) {
+      hasMore = false;
+    } else {
+      offset += pageSize;
+    }
+  }
+
+  console.log(`[MissingActivities] Loaded ${allRecords.length} shifts with missing activity`);
+  onProgress?.(`Loaded ${allRecords.length} shifts with missing activity`);
+  return allRecords;
 }
 
 /**
@@ -361,11 +446,7 @@ export async function fetchDeletedScheduleShiftAgreements(
       offset += pageSize;
     }
 
-    // Safety limit
-    if (offset >= pageSize * 20) {
-      console.warn("Reached safety limit of 10000 records");
-      hasMore = false;
-    }
+    // No artificial limit - follow pagination to completion
   }
 
   onProgress?.(`Loaded ${allRecords.length} deleted agreement records`);
@@ -457,13 +538,208 @@ export async function fetchScheduleShiftHistory(
       offset += pageSize;
     }
 
-    // Safety limit
-    if (offset >= pageSize * 20) {
-      console.warn("Reached safety limit of 10000 records");
-      hasMore = false;
-    }
+    // No artificial limit - follow pagination to completion
   }
 
   onProgress?.(`Loaded ${allRecords.length} history records`);
+  return allRecords;
+}
+
+/**
+ * Extended history data with embedded shift and schedule info via $expand
+ */
+export interface ScheduleShiftHistoryWithDetails extends ScheduleShiftHistoryData {
+  // Embedded ScheduleShift via $expand=ScheduleShiftObject
+  ScheduleShiftObject?: {
+    Id: number;
+    Description: string;
+    StartTime: string;
+    FinishTime: string;
+    ScheduleID?: number;
+    UserID?: number;
+    ActivityTypeID?: number;
+    DepartmentID?: number;
+    // Embedded Schedule via nested $expand
+    Schedule?: {
+      Id: number;
+      LocationID?: number;
+      StartDate?: string;
+      EndDate?: string;
+    };
+  };
+}
+
+/**
+ * Fetch schedule shift history with $expand for shift and schedule details
+ * OPTIMIZED: Gets all data in one OData call instead of multiple lookups
+ * Uses: ScheduleShiftHistory?$expand=ScheduleShiftObject($expand=Schedule($select=Id,LocationID,StartDate,EndDate))
+ */
+export async function fetchScheduleShiftHistoryWithExpand(
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
+): Promise<ScheduleShiftHistoryWithDetails[]> {
+  const { session, fromDate, toDate, onProgress } = options;
+
+  const pageSize = 500;
+  let offset = 0;
+  let hasMore = true;
+  const allRecords: ScheduleShiftHistoryWithDetails[] = [];
+
+  const odataBase = `${session.base_url.replace(/\/$/, "")}/CoreAPI/Odata`;
+
+  // Filter by the history record insertion date (when the change happened)
+  const filters: string[] = [];
+  if (fromDate) {
+    filters.push(`Inserted ge ${fromDate.startOf("day").toISOString()}`);
+  }
+  if (toDate) {
+    filters.push(`Inserted lt ${toDate.endOf("day").toISOString()}`);
+  }
+  const filter = filters.join(" and ");
+
+  // Use $expand to get ScheduleShift and Schedule in one call
+  const expand = "ScheduleShiftObject($select=Id,Description,StartTime,FinishTime,ScheduleID,UserID,ActivityTypeID,DepartmentID;$expand=Schedule($select=Id,LocationID,StartDate,EndDate))";
+
+  while (hasMore) {
+    onProgress?.(`Fetching change history with details: ${allRecords.length} loaded...`);
+
+    let url = `${odataBase}/ScheduleShiftHistory?$top=${pageSize}&$skip=${offset}&$orderby=Inserted desc&$expand=${encodeURIComponent(expand)}`;
+    if (filter) {
+      url += `&$filter=${encodeURIComponent(filter)}`;
+    }
+
+    console.log(`[ScheduleShiftHistory] Fetching with $expand, offset=${offset}`);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await invoke<any>("execute_rest_get", {
+      url,
+      // Credential-based auth
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      // App Token auth
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
+    });
+
+    let pageRecords: ScheduleShiftHistoryWithDetails[] = [];
+    if (response?.body) {
+      try {
+        const parsed = JSON.parse(response.body);
+        pageRecords = Array.isArray(parsed) ? parsed : parsed.value || [];
+      } catch {
+        console.error("Failed to parse OData response");
+      }
+    }
+
+    allRecords.push(...pageRecords);
+
+    if (pageRecords.length < pageSize) {
+      hasMore = false;
+    } else {
+      offset += pageSize;
+    }
+  }
+
+  console.log(`[ScheduleShiftHistory] Loaded ${allRecords.length} records with embedded shift/schedule details`);
+  onProgress?.(`Loaded ${allRecords.length} history records with details`);
+  return allRecords;
+}
+
+/**
+ * Activity history record from ScheduleShiftActivityHistoryList navigation property
+ */
+export interface ScheduleShiftActivityHistoryRecord {
+  Id: number;
+  ScheduleShiftID: number;
+  ActivityTypeID: number | null;
+  Inserted: string;
+  InsertedBy: number | null;
+  Updated?: string;
+  UpdatedBy?: number;
+  Deleted: boolean;
+}
+
+/**
+ * Extended shift data with embedded activity history via $expand
+ */
+export interface ScheduleShiftWithActivityHistory extends ScheduleShiftData {
+  ScheduleShiftActivityHistoryList?: ScheduleShiftActivityHistoryRecord[];
+}
+
+/**
+ * Fetch active timetabled shifts with $expand for activity history
+ * OPTIMIZED: Gets shifts AND activity change history in one OData call
+ * Uses: ScheduleShift?$expand=ScheduleShiftActivityHistoryList
+ */
+export async function fetchActiveShiftsWithActivityHistory(
+  options: Omit<FetchOptions, "deletedOnly" | "additionalFilter">
+): Promise<ScheduleShiftWithActivityHistory[]> {
+  const { session, fromDate, toDate, onProgress } = options;
+
+  const pageSize = 500;
+  let offset = 0;
+  let hasMore = true;
+  const allRecords: ScheduleShiftWithActivityHistory[] = [];
+
+  const odataBase = `${session.base_url.replace(/\/$/, "")}/CoreAPI/Odata`;
+
+  // Build filter: Timetabled shifts (have SyllabusPlus) and not deleted
+  const filters: string[] = ["Deleted eq false", "adhoc_SyllabusPlus ne null"];
+  if (fromDate) {
+    filters.push(`StartTime ge ${fromDate.startOf("day").toISOString()}`);
+  }
+  if (toDate) {
+    filters.push(`StartTime lt ${toDate.endOf("day").toISOString()}`);
+  }
+  const filter = filters.join(" and ");
+
+  // $expand to get activity history inline
+  // NOTE: Nimbus OData API doesn't support $orderby inside $expand (returns 500 error)
+  // We sort the history records client-side instead
+  const expand = "ScheduleShiftActivityHistoryList($select=Id,ScheduleShiftID,ActivityTypeID,Inserted,InsertedBy,Deleted)";
+
+  while (hasMore) {
+    onProgress?.(`Fetching shifts with activity history: ${allRecords.length} loaded...`);
+
+    // Build URL with $select (required for adhoc fields!) and $expand
+    let url = `${odataBase}/ScheduleShift?$select=${SCHEDULE_SHIFT_SELECT_FIELDS}&$top=${pageSize}&$skip=${offset}&$expand=${encodeURIComponent(expand)}`;
+    if (filter) {
+      url += `&$filter=${encodeURIComponent(filter)}`;
+    }
+
+    console.log(`[ScheduleShift] Fetching with $expand=ScheduleShiftActivityHistoryList, offset=${offset}`);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await invoke<any>("execute_rest_get", {
+      url,
+      // Credential-based auth
+      userId: session.auth_mode === "credential" ? session.user_id : null,
+      authToken: session.auth_mode === "credential" ? session.auth_token : null,
+      // App Token auth
+      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+      username: session.auth_mode === "apptoken" ? session.username : null,
+    });
+
+    let pageRecords: ScheduleShiftWithActivityHistory[] = [];
+    if (response?.body) {
+      try {
+        const parsed = JSON.parse(response.body);
+        pageRecords = Array.isArray(parsed) ? parsed : parsed.value || [];
+      } catch {
+        console.error("Failed to parse OData response");
+      }
+    }
+
+    allRecords.push(...pageRecords);
+
+    if (pageRecords.length < pageSize) {
+      hasMore = false;
+    } else {
+      offset += pageSize;
+    }
+  }
+
+  const shiftsWithHistory = allRecords.filter(s => s.ScheduleShiftActivityHistoryList && s.ScheduleShiftActivityHistoryList.length > 0).length;
+  console.log(`[ScheduleShift] Loaded ${allRecords.length} shifts, ${shiftsWithHistory} have activity history`);
+  onProgress?.(`Loaded ${allRecords.length} timetabled shifts with activity history`);
   return allRecords;
 }

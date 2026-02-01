@@ -3,6 +3,7 @@ import { Paper, Typography, Alert, Chip, Box, Tooltip, FormControlLabel, Switch 
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import ReportFilters from "./ReportFilters";
+import { dataGridStyles } from "./dataGridStyles";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { fetchUsersWithSecurityRoles } from "../../hooks/useUserSecurityRoles";
@@ -266,13 +267,7 @@ export default function UserSecurityRolesReport() {
           pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
-        sx={{
-          flex: 1,
-          minHeight: 400,
-          "& .MuiDataGrid-virtualScroller": {
-            overflowX: "auto",
-          },
-        }}
+        sx={dataGridStyles}
       />
     </Paper>
   );

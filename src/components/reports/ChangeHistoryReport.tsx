@@ -5,19 +5,19 @@ import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
+import { dataGridStyles } from "./dataGridStyles";
 import CascadingLocationFilter from "../filters/CascadingLocationFilter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { openNimbusSchedule } from "../../core/nimbusLinks";
-import { fetchScheduleShiftHistory } from "../../hooks/useScheduleShifts";
+import { fetchScheduleShiftHistoryWithExpand, ScheduleShiftHistoryWithDetails } from "../../hooks/useScheduleShifts";
 import {
-  loadAllLookups,
+  loadUsers,
   loadLocations,
+  loadDepartments,
   getUserDisplayName,
   getDepartment,
-  getScheduleDateRange,
-  getLocationViaSchedule,
-  getLocationIdViaSchedule,
+  getLocation,
 } from "../../core/lookupService";
 import {
   loadLocationGroupHierarchy,
@@ -54,7 +54,7 @@ const baseColumns: GridColDef<ChangeHistoryRow>[] = [
   { field: "allocatedPerson", headerName: "Allocated Person", width: 200 },
   { field: "location", headerName: "Location", width: 140 },
   { field: "department", headerName: "Department", width: 140 },
-  { field: "scheduleId", headerName: "Schedule ID", width: 100, type: "number" },
+  { field: "scheduleId", headerName: "Schedule ID", width: 90 },
   { field: "scheduleDateRange", headerName: "Schedule Period", width: 160 },
   { field: "wasDeleted", headerName: "Deleted", width: 80 },
 ];
@@ -141,42 +141,54 @@ export default function ChangeHistoryReport() {
         username: session.username,
       };
 
-      // Fetch change history
-      setStatus("Fetching change history...");
-      const history = await fetchScheduleShiftHistory({
+      // OPTIMIZED: Fetch change history with $expand for shift and schedule details
+      // Gets all data in one OData call instead of separate lookups
+      setStatus("Fetching change history with details...");
+      const history = await fetchScheduleShiftHistoryWithExpand({
         session: sessionData,
         fromDate,
         toDate,
         onProgress: setStatus,
       });
 
-      console.log(`Fetched ${history.length} history records`);
+      console.log(`Fetched ${history.length} history records with embedded details`);
 
-      // Collect unique schedule IDs
-      const scheduleIds = [...new Set(history.map(h => h.ScheduleID).filter((id): id is number => id != null && id > 0))];
+      // Load only user and department lookups (location comes from embedded Schedule)
+      setStatus("Loading user and department data...");
+      await Promise.all([
+        loadUsers(sessionData),
+        loadDepartments(sessionData),
+        loadLocations(sessionData), // Still need for getLocation() lookup
+      ]);
 
-      // Load lookup data
-      await loadAllLookups(sessionData, scheduleIds, setStatus);
+      // Transform data - use embedded ScheduleShiftObject and Schedule from $expand
+      const transformed: ChangeHistoryRow[] = history.map((item: ScheduleShiftHistoryWithDetails, index) => {
+        const shift = item.ScheduleShiftObject;
+        const schedule = shift?.Schedule;
+        const locationId = schedule?.LocationID || null;
+        const scheduleDateRange = schedule
+          ? `${schedule.StartDate ? dayjs(schedule.StartDate).format("DD/MM/YYYY") : ""} - ${schedule.EndDate ? dayjs(schedule.EndDate).format("DD/MM/YYYY") : ""}`
+          : "";
 
-      // Transform data
-      const transformed: ChangeHistoryRow[] = history.map((item, index) => ({
-        id: item.Id || index,
-        scheduleShiftId: item.ScheduleShiftID,
-        shiftDescription: item.Description || "",
-        shiftDate: item.StartTime ? dayjs(item.StartTime).format("DD/MM/YYYY") : "",
-        shiftFrom: item.StartTime ? dayjs(item.StartTime).format("HH:mm") : "",
-        shiftTo: item.FinishTime ? dayjs(item.FinishTime).format("HH:mm") : "",
-        changeDate: item.Inserted ? dayjs(item.Inserted).format("DD/MM/YYYY HH:mm") : "",
-        changedBy: getUserDisplayName(item.InsertedBy),
-        location: getLocationViaSchedule(item.ScheduleID),
-        locationId: getLocationIdViaSchedule(item.ScheduleID),
-        department: getDepartment(item.DepartmentID),
-        scheduleId: item.ScheduleID || null,
-        scheduleDateRange: getScheduleDateRange(item.ScheduleID),
-        allocatedPerson: getUserDisplayName(item.UserID),
-        activityTypeId: item.ActivityTypeID || null,
-        wasDeleted: item.Deleted,
-      }));
+        return {
+          id: item.Id || index,
+          scheduleShiftId: item.ScheduleShiftID,
+          shiftDescription: shift?.Description || item.Description || "",
+          shiftDate: (shift?.StartTime || item.StartTime) ? dayjs(shift?.StartTime || item.StartTime).format("DD/MM/YYYY") : "",
+          shiftFrom: (shift?.StartTime || item.StartTime) ? dayjs(shift?.StartTime || item.StartTime).format("HH:mm") : "",
+          shiftTo: (shift?.FinishTime || item.FinishTime) ? dayjs(shift?.FinishTime || item.FinishTime).format("HH:mm") : "",
+          changeDate: item.Inserted ? dayjs(item.Inserted).format("DD/MM/YYYY HH:mm") : "",
+          changedBy: getUserDisplayName(item.InsertedBy),
+          location: locationId ? getLocation(locationId) : "",
+          locationId,
+          department: getDepartment(shift?.DepartmentID || item.DepartmentID),
+          scheduleId: shift?.ScheduleID || item.ScheduleID || null,
+          scheduleDateRange,
+          allocatedPerson: getUserDisplayName(shift?.UserID || item.UserID),
+          activityTypeId: shift?.ActivityTypeID || item.ActivityTypeID || null,
+          wasDeleted: item.Deleted,
+        };
+      });
 
       // Filter by location group and/or specific location
       let filtered = transformed;
@@ -272,28 +284,11 @@ export default function ChangeHistoryReport() {
         loading={loading}
         pageSizeOptions={[25, 50, 100]}
         initialState={{
-          pagination: { paginationModel: { pageSize: 25 } },
+          pagination: { paginationModel: { pageSize: 50 } },
           sorting: { sortModel: [{ field: "changeDate", sort: "desc" }] },
         }}
         disableRowSelectionOnClick
-        sx={{
-          flex: 1,
-          minHeight: 400,
-          "& .MuiDataGrid-virtualScroller": {
-            overflowX: "auto",
-          },
-          "& .MuiDataGrid-scrollbar--horizontal": {
-            display: "block",
-          },
-          // Pin first column (actions)
-          "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
-            position: "sticky",
-            left: 0,
-            backgroundColor: "#fff",
-            zIndex: 1,
-            borderRight: "1px solid rgba(224, 224, 224, 1)",
-          },
-        }}
+        sx={dataGridStyles}
       />
     </Paper>
   );
