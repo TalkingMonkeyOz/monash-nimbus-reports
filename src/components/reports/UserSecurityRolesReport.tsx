@@ -3,16 +3,14 @@ import { Paper, Typography, Alert, Chip, Box, Tooltip, FormControlLabel, Switch 
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import ReportFilters from "./ReportFilters";
-import { dataGridStyles } from "./dataGridStyles";
+import { dataGridStylesNoPin } from "./dataGridStyles";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
-import { fetchUsersWithSecurityRoles } from "../../hooks/useUserSecurityRoles";
+import { fetchUsersWithSecurityRoles, UserSecurityRoleData } from "../../hooks/useUserSecurityRoles";
 
 interface UserSecurityRoleRow {
-  id: string; // Composite key: UserId-SecurityRoleId-JobRoleId
+  id: number;
   username: string;
-  forename: string;
-  surname: string;
   fullName: string;
   payroll: string;
   active: boolean;
@@ -20,8 +18,6 @@ interface UserSecurityRoleRow {
   securityRole: string;
   securityRoleLocation: string;
   securityRoleLocationGroup: string;
-  jobRole: string;
-  isDefaultJobRole: boolean;
 }
 
 // Columns for display and export
@@ -30,9 +26,8 @@ const baseColumns: GridColDef<UserSecurityRoleRow>[] = [
   { field: "fullName", headerName: "Name", width: 180 },
   { field: "payroll", headerName: "Payroll", width: 100 },
   { field: "securityRole", headerName: "Security Role", flex: 1, minWidth: 150 },
-  { field: "securityRoleLocation", headerName: "SR Location", width: 150 },
-  { field: "securityRoleLocationGroup", headerName: "SR Location Group", width: 160 },
-  { field: "jobRole", headerName: "Job Role", flex: 1, minWidth: 150 },
+  { field: "securityRoleLocation", headerName: "Location", width: 150 },
+  { field: "securityRoleLocationGroup", headerName: "Location Group", width: 160 },
   { field: "rosterable", headerName: "Rosterable", width: 100, type: "boolean" },
   { field: "active", headerName: "Active", width: 80, type: "boolean" },
 ];
@@ -49,7 +44,7 @@ export default function UserSecurityRolesReport() {
 
   // Build columns with chip rendering for boolean fields
   const columns: GridColDef<UserSecurityRoleRow>[] = useMemo(() => [
-    ...baseColumns.slice(0, 7), // All columns before rosterable
+    ...baseColumns.slice(0, 6), // All columns before rosterable
     {
       field: "rosterable",
       headerName: "Rosterable",
@@ -98,83 +93,43 @@ export default function UserSecurityRolesReport() {
         username: session.username,
       };
 
-      // Fetch users with security roles and job roles
-      const users = await fetchUsersWithSecurityRoles({
+      // Fetch security roles (single OData query with $expand)
+      const securityRoles = await fetchUsersWithSecurityRoles({
         session: sessionData,
         activeOnly,
         onProgress: setStatus,
       });
 
-      setStatus(`Processing ${users.length} users...`);
+      setStatus(`Processing ${securityRoles.length} security role assignments...`);
 
-      // Flatten: one row per user-securityrole-jobrole combination
-      const flattened: UserSecurityRoleRow[] = [];
-      let rowId = 0;
+      // Transform to row format - one row per security role assignment
+      let rows: UserSecurityRoleRow[] = securityRoles.map((sr: UserSecurityRoleData) => ({
+        id: sr.Id,
+        username: sr.UserObject?.Username || "",
+        fullName: `${sr.UserObject?.Forename || ""} ${sr.UserObject?.Surname || ""}`.trim(),
+        payroll: sr.UserObject?.Payroll || "",
+        active: sr.UserObject?.Active ?? false,
+        rosterable: sr.UserObject?.Rosterable ?? false,
+        securityRole: sr.SecurityRole?.Description || "",
+        securityRoleLocation: sr.LocationObject?.Description || "",
+        securityRoleLocationGroup: sr.LocationGroupObject?.Description || "",
+      }));
 
-      for (const user of users) {
-        // Apply rosterable filter if enabled
-        if (rosterableOnly && !user.Rosterable) continue;
-
-        const securityRoles = user.SecurityRoles?.filter(sr => sr.Active) || [];
-        const jobRoles = user.JobRoles?.filter(jr => jr.Active) || [];
-
-        // If user has no roles, still show them with empty role columns
-        if (securityRoles.length === 0 && jobRoles.length === 0) {
-          flattened.push({
-            id: `${user.Id}-0-0`,
-            username: user.Username || "",
-            forename: user.Forename || "",
-            surname: user.Surname || "",
-            fullName: `${user.Forename || ""} ${user.Surname || ""}`.trim(),
-            payroll: user.Payroll || "",
-            active: user.Active,
-            rosterable: user.Rosterable,
-            securityRole: "",
-            securityRoleLocation: "",
-            securityRoleLocationGroup: "",
-            jobRole: "",
-            isDefaultJobRole: false,
-          });
-          continue;
-        }
-
-        // Create combinations of security roles and job roles
-        // If one list is empty, still iterate with empty placeholder
-        const srList = securityRoles.length > 0 ? securityRoles : [null];
-        const jrList = jobRoles.length > 0 ? jobRoles : [null];
-
-        for (const sr of srList) {
-          for (const jr of jrList) {
-            rowId++;
-            flattened.push({
-              id: `${user.Id}-${sr?.Id || 0}-${jr?.Id || 0}-${rowId}`,
-              username: user.Username || "",
-              forename: user.Forename || "",
-              surname: user.Surname || "",
-              fullName: `${user.Forename || ""} ${user.Surname || ""}`.trim(),
-              payroll: user.Payroll || "",
-              active: user.Active,
-              rosterable: user.Rosterable,
-              securityRole: sr?.SecurityRole?.Description || "",
-              securityRoleLocation: sr?.LocationObject?.Description || "",
-              securityRoleLocationGroup: sr?.LocationGroupObject?.Description || "",
-              jobRole: jr?.JobRole?.Description || "",
-              isDefaultJobRole: jr?.DefaultRole || false,
-            });
-          }
-        }
+      // Apply rosterable filter if enabled
+      if (rosterableOnly) {
+        rows = rows.filter(r => r.rosterable);
       }
 
       // Sort by username, then security role
-      flattened.sort((a, b) => {
+      rows.sort((a, b) => {
         const usernameCompare = a.username.localeCompare(b.username);
         if (usernameCompare !== 0) return usernameCompare;
         return a.securityRole.localeCompare(b.securityRole);
       });
 
-      setData(flattened);
-      const uniqueUsers = new Set(flattened.map(r => r.username)).size;
-      setStatus(`Found ${flattened.length} rows for ${uniqueUsers} users`);
+      setData(rows);
+      const uniqueUsers = new Set(rows.map(r => r.username)).size;
+      setStatus(`Found ${rows.length} security role assignments for ${uniqueUsers} users`);
     } catch (err) {
       console.error("Search failed:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -204,10 +159,10 @@ export default function UserSecurityRolesReport() {
         <Tooltip
           title={
             <>
-              <strong>Purpose:</strong> View user security role and job role assignments.
+              <strong>Purpose:</strong> View user security role assignments.
               <br /><br />
               Shows which security roles each user has, including the location/location group
-              scope for each role, plus their job role assignments.
+              scope for each role.
               <br /><br />
               <strong>Tip:</strong> Use filters to focus on active or rosterable users only.
             </>
@@ -219,9 +174,12 @@ export default function UserSecurityRolesReport() {
         {uniqueUserCount > 0 && (
           <Chip label={`${uniqueUserCount} users`} color="primary" size="small" variant="outlined" />
         )}
+        {data.length > 0 && (
+          <Chip label={`${data.length} roles`} size="small" variant="outlined" />
+        )}
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {status || "View user security roles, job roles, and their location scope."}
+        {status || "View user security roles and their location scope."}
       </Typography>
 
       <ReportFilters
@@ -267,7 +225,7 @@ export default function UserSecurityRolesReport() {
           pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
-        sx={dataGridStyles}
+        sx={dataGridStylesNoPin}
       />
     </Paper>
   );

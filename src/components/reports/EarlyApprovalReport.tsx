@@ -5,7 +5,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import dayjs, { Dayjs } from "dayjs";
 import ReportFilters from "./ReportFilters";
-import { dataGridStyles } from "./dataGridStyles";
+import { dataGridStylesNoPin } from "./dataGridStyles";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { fetchEarlyApprovals, EarlyApprovalData } from "../../hooks/useEarlyApprovals";
@@ -226,7 +226,7 @@ export default function EarlyApprovalReport() {
           pagination: { paginationModel: { pageSize: 50 } },
         }}
         disableRowSelectionOnClick
-        sx={dataGridStyles}
+        sx={dataGridStylesNoPin}
       />
     </Paper>
   );

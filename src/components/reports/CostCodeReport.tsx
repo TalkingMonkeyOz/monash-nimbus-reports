@@ -7,7 +7,7 @@ import WarningIcon from "@mui/icons-material/Warning";
 import BlockIcon from "@mui/icons-material/Block";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import ReportFilters from "./ReportFilters";
-import { dataGridStyles } from "./dataGridStyles";
+import { dataGridStylesNoPin } from "./dataGridStyles";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { exportToExcel } from "../../core/export";
 import { fetchCostCodes, getCostCodeStats, type CostCentre } from "../../hooks/useCostCodes";
@@ -301,7 +301,7 @@ export default function CostCodeReport() {
           }
           return "";
         }}
-        sx={dataGridStyles}
+        sx={dataGridStylesNoPin}
       />
     </Paper>
   );

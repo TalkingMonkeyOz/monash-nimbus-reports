@@ -3,22 +3,17 @@
  *
  * Features:
  * - Sticky column headers with highlighting
- * - Sticky first column (actions) with border
- * - Horizontal scroll enabled
+ * - Optional sticky first column (actions) with border
+ * - Horizontal scroll enabled with always-visible scrollbar
  * - Row highlighting for flagged/invalid rows
  */
 
 import { SxProps, Theme } from "@mui/material";
 
 /**
- * Standard DataGrid sx props for all reports
- * Includes:
- * - Column header styling (grey background, blue border, bold text)
- * - Sticky first column for action buttons
- * - Proper horizontal scroll handling
- * - Support for row highlighting classes
+ * Base styles shared by all DataGrid variants
  */
-export const dataGridStyles: SxProps<Theme> = {
+const baseStyles: SxProps<Theme> = {
   flex: 1,
   minHeight: 400,
   // Column header styling - sticky with visual distinction
@@ -32,13 +27,39 @@ export const dataGridStyles: SxProps<Theme> = {
   "& .MuiDataGrid-columnHeaderTitle": {
     fontWeight: 600,
   },
-  // Enable horizontal scrolling
+  // Enable horizontal scrolling with always-visible scrollbar
   "& .MuiDataGrid-virtualScroller": {
     overflowX: "auto",
   },
+  // Ensure horizontal scrollbar is always visible at the bottom of the grid
   "& .MuiDataGrid-scrollbar--horizontal": {
     display: "block",
+    position: "sticky",
+    bottom: 0,
+    zIndex: 2,
   },
+  // Main container should allow scrollbar to be visible
+  "& .MuiDataGrid-main": {
+    overflow: "visible",
+  },
+  // Row highlighting classes
+  "& .flagged-row": {
+    backgroundColor: "rgba(211, 47, 47, 0.08)",
+  },
+  "& .warning-row": {
+    backgroundColor: "rgba(237, 108, 2, 0.08)",
+  },
+  "& .row-invalid": {
+    backgroundColor: "rgba(211, 47, 47, 0.04)",
+  },
+};
+
+/**
+ * Standard DataGrid sx props for reports WITH an actions column
+ * The first column (actions) is pinned/sticky for easy access while scrolling
+ */
+export const dataGridStyles: SxProps<Theme> = {
+  ...baseStyles,
   // Pin first column (actions) - sticky with border
   "& .MuiDataGrid-cell:first-of-type, & .MuiDataGrid-columnHeader:first-of-type": {
     position: "sticky",
@@ -52,16 +73,14 @@ export const dataGridStyles: SxProps<Theme> = {
     zIndex: 3,
     backgroundColor: "#f5f5f5",
   },
-  // Row highlighting classes
-  "& .flagged-row": {
-    backgroundColor: "rgba(211, 47, 47, 0.08)",
-  },
-  "& .warning-row": {
-    backgroundColor: "rgba(237, 108, 2, 0.08)",
-  },
-  "& .row-invalid": {
-    backgroundColor: "rgba(211, 47, 47, 0.04)",
-  },
+};
+
+/**
+ * DataGrid sx props for reports WITHOUT an actions column
+ * No column pinning - all columns scroll together
+ */
+export const dataGridStylesNoPin: SxProps<Theme> = {
+  ...baseStyles,
 };
 
 /**

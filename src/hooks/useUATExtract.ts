@@ -217,6 +217,42 @@ export interface FetchUATExtractOptions {
  * Generic paginated OData fetch - NO LIMIT, follows nextLink like original loader
  * Fetches ALL records by following OData pagination
  */
+/**
+ * Fetch a single page with retry logic
+ */
+async function fetchWithRetry(
+  session: UserSession,
+  url: string,
+  maxRetries: number = 3
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await invoke("execute_rest_get", {
+        url,
+        userId: session.auth_mode === "credential" ? session.user_id : null,
+        authToken: session.auth_mode === "credential" ? session.auth_token : null,
+        appToken: session.auth_mode === "apptoken" ? session.app_token : null,
+        username: session.auth_mode === "apptoken" ? session.username : null,
+      });
+      return response;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`[Retry ${attempt}/${maxRetries}] Request failed: ${lastError.message}`);
+
+      if (attempt < maxRetries) {
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error("Request failed after retries");
+}
+
 async function fetchPaginated<T>(
   session: UserSession,
   entityPath: string,
@@ -239,14 +275,8 @@ async function fetchPaginated<T>(
     pageCount++;
     onProgress?.(`Fetching ${entityPath}: ${allRecords.length} loaded (page ${pageCount})...`);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await invoke<any>("execute_rest_get", {
-      url: currentUrl,
-      userId: session.auth_mode === "credential" ? session.user_id : null,
-      authToken: session.auth_mode === "credential" ? session.auth_token : null,
-      appToken: session.auth_mode === "apptoken" ? session.app_token : null,
-      username: session.auth_mode === "apptoken" ? session.username : null,
-    });
+    // Use retry wrapper for resilience
+    const response = await fetchWithRetry(session, currentUrl);
 
     let pageRecords: T[] = [];
     let nextLink: string | null = null;
